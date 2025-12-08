@@ -1,0 +1,16 @@
+includes:
+    - phpstan-baseline.neon
+
+parameters:
+    level: 6
+    treatPhpDocTypesAsCertain: false
+    bootstrapFiles:
+        - tests/bootstrap.php
+    excludePaths:
+    ignoreErrors:
+        -
+            identifier: missingType.iterableValue
+        -
+            identifier: missingType.generics
+
+services:
