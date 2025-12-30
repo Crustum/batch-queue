@@ -9,7 +9,7 @@
         "cakephp/queue": "^2.0"
     },
     "require-dev": {
-        "phpunit/phpunit": "^10.0",
+        "phpunit/phpunit": "^12.5",
         "enqueue/fs": "^0.10.26",
         "cakedc/cakephp-enqueue": "^2.0",
         "cakephp/cakephp-codesniffer": "^5.0"
@@ -25,6 +25,14 @@
         }
     },
     "scripts": {
+        "check": [
+            "@cs-check",
+            "@test",
+            "@analyse"
+        ],
+        "analyse": [
+            "@stan"
+        ],
         "cs-check": "phpcs -p --standard=phpcs.xml src/ tests/",
         "cs-fix": "phpcbf --standard=phpcs.xml src/ tests/",
         "test": "phpunit",

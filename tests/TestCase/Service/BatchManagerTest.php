@@ -7,14 +7,12 @@ use Cake\TestSuite\TestCase;
 use Crustum\BatchQueue\Service\BatchBuilder;
 use Crustum\BatchQueue\Service\BatchManager;
 use Crustum\BatchQueue\Storage\BatchStorageInterface;
-use PHPUnit\Framework\MockObject\MockObject;
 
 /**
  * BatchManager Test Case
  */
 class BatchManagerTest extends TestCase
 {
-    protected BatchStorageInterface&MockObject $storage;
     protected BatchManager $manager;
 
     /**
@@ -26,8 +24,8 @@ class BatchManagerTest extends TestCase
     {
         parent::setUp();
 
-        $this->storage = $this->createMock(BatchStorageInterface::class);
-        $this->manager = new BatchManager($this->storage, null, 'test_queue');
+        $storage = $this->createStub(BatchStorageInterface::class);
+        $this->manager = new BatchManager($storage, null, 'test_queue');
     }
 
     /**
