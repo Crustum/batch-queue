@@ -246,7 +246,7 @@ final class BatchJobDefinition
             }
         }
 
-        return new static(
+        return new self(
             id: $data['id'],
             batchId: $data['batch_id'],
             jobId: $data['job_id'],

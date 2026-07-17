@@ -35,7 +35,6 @@ abstract class BaseBatchProcessor extends Processor
      *
      * @param \Psr\Log\LoggerInterface $logger Logger.
      * @param \Cake\Core\ContainerInterface $container Container.
-     * @return void
      */
     public function __construct(
         LoggerInterface $logger,
@@ -60,7 +59,7 @@ abstract class BaseBatchProcessor extends Processor
         $response = $callable($message);
 
         if ($response === null) {
-            $response = InteropProcessor::ACK;
+            return InteropProcessor::ACK;
         }
 
         return $response;
@@ -80,11 +79,7 @@ abstract class BaseBatchProcessor extends Processor
         $target = $message->getTarget();
         $jobClass = $target[0];
 
-        if ($this->container && $this->container->has($jobClass)) {
-            $jobInstance = $this->container->get($jobClass);
-        } else {
-            $jobInstance = new $jobClass();
-        }
+        $jobInstance = $this->container && $this->container->has($jobClass) ? $this->container->get($jobClass) : new $jobClass();
 
         $callable = Closure::fromCallable([$jobInstance, $target[1]]);
         $response = $callable($message);

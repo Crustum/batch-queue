@@ -48,7 +48,7 @@ final class BatchJobMessage implements JsonSerializable
         array $jobData,
         array $context = [],
     ): static {
-        return new static(
+        return new self(
             batchId: $batchId,
             jobId: $jobId,
             type: BatchDefinition::TYPE_PARALLEL,
@@ -76,7 +76,7 @@ final class BatchJobMessage implements JsonSerializable
         array $remainingChain = [],
         int $position = 0,
     ): static {
-        return new static(
+        return new self(
             batchId: $batchId,
             jobId: $jobId,
             type: BatchDefinition::TYPE_SEQUENTIAL,
@@ -171,7 +171,7 @@ final class BatchJobMessage implements JsonSerializable
      */
     public static function fromQueuePayload(array $payload): static
     {
-        return new static(
+        return new self(
             batchId: $payload['batch_id'],
             jobId: $payload['job_id'],
             type: $payload['type'],
@@ -208,7 +208,7 @@ final class BatchJobMessage implements JsonSerializable
      */
     public static function fromArray(array $data): static
     {
-        return new static(
+        return new self(
             batchId: $data['batch_id'],
             jobId: $data['job_id'],
             type: $data['type'],

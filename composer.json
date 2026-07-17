@@ -12,6 +12,7 @@
         "phpunit/phpunit": "^12.5",
         "enqueue/fs": "^0.10.26",
         "cakedc/cakephp-enqueue": "^2.0",
+        "rector/rector": "^2.5",
         "cakephp/cakephp-codesniffer": "^5.0"
     },
     "autoload": {
@@ -39,6 +40,8 @@
         "test:coverage": "phpunit --coverage-html coverage",
         "stan": "tools/phpstan analyse src/",
         "psalm": "tools/psalm --show-info=false",
+        "rector-check": "vendor/bin/rector process --dry-run",
+        "rector-fix": "vendor/bin/rector process",
         "stan-tests": "tools/phpstan analyze -c tests/phpstan.neon",
         "stan-baseline": "tools/phpstan --generate-baseline"
     },

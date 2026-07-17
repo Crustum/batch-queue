@@ -138,6 +138,7 @@ class BatchJobsTable extends Table
                 'payload' => json_encode($jobData),
             ]);
         }
+
         $this->saveManyOrFail($entities);
     }
 
@@ -229,6 +230,7 @@ class BatchJobsTable extends Table
      */
     public function getBatchResults(string $batchId): array
     {
+        /** @var list<\Crustum\BatchQueue\Model\Entity\BatchJob> $jobs */
         $jobs = $this->find()
             ->select(['job_id', 'result'])
             ->where([
@@ -253,6 +255,7 @@ class BatchJobsTable extends Table
      */
     public function getFailedJobs(string $batchId): array
     {
+        /** @var list<\Crustum\BatchQueue\Model\Entity\BatchJob> $jobs */
         $jobs = $this->find()
             ->select(['job_id', 'payload', 'error'])
             ->where([

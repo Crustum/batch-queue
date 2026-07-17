@@ -20,12 +20,19 @@ use InvalidArgumentException;
 final class BatchBuilder
 {
     private BatchStorageInterface $storage;
+
     private ?string $queueConfig;
+
     private ?string $queueName;
+
     private string $type;
+
     private array $jobs;
+
     private string $batchId;
+
     private array $context = [];
+
     private array $options = [];
 
     /**
@@ -103,6 +110,7 @@ final class BatchBuilder
         if (is_callable($callback) && !is_string($callback)) {
             throw new InvalidArgumentException('Closures cannot be used as callbacks in queue systems. Use class names or job definitions.');
         }
+
         $this->options['on_complete'] = $callback;
 
         return $this;
@@ -120,6 +128,7 @@ final class BatchBuilder
         if (is_callable($callback) && !is_string($callback)) {
             throw new InvalidArgumentException('Closures cannot be used as callbacks in queue systems. Use class names or job definitions.');
         }
+
         $this->options['on_failure'] = $callback;
 
         return $this;
@@ -187,7 +196,7 @@ final class BatchBuilder
      */
     public function dispatch(): string
     {
-        if (empty($this->jobs)) {
+        if ($this->jobs === []) {
             throw new InvalidArgumentException('Cannot dispatch empty batch');
         }
 
@@ -195,6 +204,7 @@ final class BatchBuilder
         if ($resolvedQueueConfig === null && $this->queueName !== null) {
             $resolvedQueueConfig = QueueConfigService::getQueueConfigForNamedQueue($this->queueName);
         }
+
         if ($resolvedQueueConfig === null) {
             $resolvedQueueConfig = QueueConfigService::getQueueConfig($this->type);
         }

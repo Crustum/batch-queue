@@ -12,7 +12,18 @@ use Interop\Queue\Processor;
  */
 class ContextReceiverJob implements JobInterface
 {
+    /**
+     * Execution log
+     *
+     * @var array<string, mixed>
+     */
     public static array $executionLog = [];
+
+    /**
+     * Stored contexts
+     *
+     * @var array<array<string, mixed>>
+     */
     public static array $contexts = [];
 
     /**
@@ -24,9 +35,7 @@ class ContextReceiverJob implements JobInterface
         $batchId = $args['batch_id'] ?? null;
         $position = $args['job_position'] ?? -1;
 
-        $contextReceived = array_filter($args, function ($key) {
-            return !in_array($key, ['batch_id', 'job_position', 'compensation']);
-        }, ARRAY_FILTER_USE_KEY);
+        $contextReceived = array_filter($args, fn($key): bool => !in_array($key, ['batch_id', 'job_position', 'compensation']), ARRAY_FILTER_USE_KEY);
 
         self::$executionLog[] = [
             'job' => 'ContextReceiverJob',

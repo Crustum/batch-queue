@@ -106,9 +106,7 @@ class DynamicJobAdditionIntegrationTest extends BaseIntegrationTestCase
             Job4::$executionLog,
         );
 
-        usort($executionLog, function ($a, $b) {
-            return $a['position'] <=> $b['position'];
-        });
+        usort($executionLog, fn(array $a, array $b): int => $a['position'] <=> $b['position']);
 
         $this->assertCount(4, $executionLog, 'All 4 jobs should have executed');
         $this->assertEquals('DynamicJobAdderJob', $executionLog[0]['job'], 'First job should be DynamicJobAdderJob');
@@ -164,9 +162,7 @@ class DynamicJobAdditionIntegrationTest extends BaseIntegrationTestCase
             Job4::$executionLog,
         );
 
-        usort($executionLog, function ($a, $b) {
-            return $a['position'] <=> $b['position'];
-        });
+        usort($executionLog, fn(array $a, array $b): int => $a['position'] <=> $b['position']);
 
         $this->assertCount(4, $executionLog, 'All 4 jobs should have executed');
         $this->assertEquals('Job1AddsJob2And3', $executionLog[0]['job'], 'First job should be Job1AddsJob2And3');
@@ -220,9 +216,7 @@ class DynamicJobAdditionIntegrationTest extends BaseIntegrationTestCase
             Job3::$executionLog,
         );
 
-        usort($executionLog, function ($a, $b) {
-            return $a['position'] <=> $b['position'];
-        });
+        usort($executionLog, fn(array $a, array $b): int => $a['position'] <=> $b['position']);
 
         $this->assertCount(3, $executionLog, 'All 3 jobs should have executed');
         $this->assertEquals('Job1AddsJob3', $executionLog[0]['job'], 'First job should be Job1AddsJob3');

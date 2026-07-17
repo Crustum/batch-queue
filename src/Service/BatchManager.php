@@ -25,7 +25,9 @@ use RuntimeException;
 class BatchManager
 {
     private BatchStorageInterface $storage;
+
     private ?string $queueName;
+
     private ?string $queueConfig;
 
     /**
@@ -104,11 +106,11 @@ class BatchManager
     public function addJobs(string $batchId, array $jobs): BatchDefinition
     {
         $batch = $this->storage->getBatch($batchId);
-        if (!$batch) {
+        if (!$batch instanceof BatchDefinition) {
             throw new RuntimeException(__('Batch not found: {0}', $batchId));
         }
 
-        if (in_array($batch->status, ['completed', 'failed'])) {
+        if (in_array($batch->status, ['completed', 'failed'], true)) {
             throw new RuntimeException(__('Cannot add jobs to {0} batch: {1}', $batch->status, $batchId));
         }
 
@@ -148,9 +150,7 @@ class BatchManager
 
                 $normalized[] = $jobDefinition->toNormalized($position, $jobId);
             } catch (InvalidArgumentException $e) {
-                throw new InvalidArgumentException(
-                    "Invalid job definition at index {$index}: {$e->getMessage()}",
-                );
+                throw new InvalidArgumentException("Invalid job definition at index {$index}: {$e->getMessage()}", $e->getCode(), $e);
             }
         }
 
@@ -166,7 +166,7 @@ class BatchManager
     public function getProgress(string $batchId): ?array
     {
         $batch = $this->storage->getBatch($batchId);
-        if (!$batch) {
+        if (!$batch instanceof BatchDefinition) {
             return null;
         }
 
@@ -195,7 +195,7 @@ class BatchManager
     public function cancelBatch(string $batchId): bool
     {
         $batch = $this->storage->getBatch($batchId);
-        if (!$batch) {
+        if (!$batch instanceof BatchDefinition) {
             return false;
         }
 
@@ -233,7 +233,7 @@ class BatchManager
     private function triggerCompensation(BatchDefinition $batch): bool
     {
         $compensationJobs = $batch->getJobsWithCompensation();
-        if (empty($compensationJobs)) {
+        if ($compensationJobs === []) {
             return false;
         }
 

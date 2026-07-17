@@ -63,9 +63,7 @@ class JobDefinitionFactoryTest extends TestCase
 
         $this->assertInstanceOf(CompensatedJobDefinition::class, $job);
         $this->assertEquals(stdClass::class, $job->getClass());
-        if ($job instanceof CompensatedJobDefinition) {
-            $this->assertEquals(Exception::class, $job->getCompensationClass());
-        }
+        $this->assertEquals(Exception::class, $job->getCompensationClass());
     }
 
     /**
@@ -87,9 +85,8 @@ class JobDefinitionFactoryTest extends TestCase
 
         $this->assertInstanceOf(CompensatedJobDefinition::class, $job);
         $this->assertEquals(stdClass::class, $job->getClass());
-        if ($job instanceof CompensatedJobDefinition) {
-            $this->assertEquals(Exception::class, $job->getCompensationClass());
-        }
+        $this->assertEquals(Exception::class, $job->getCompensationClass());
+
         $this->assertEquals($args, $job->getArgs());
     }
 
@@ -175,9 +172,8 @@ class JobDefinitionFactoryTest extends TestCase
 
         $this->assertInstanceOf(CompensatedJobDefinition::class, $job);
         $this->assertEquals(stdClass::class, $job->getClass());
-        if ($job instanceof CompensatedJobDefinition) {
-            $this->assertEquals(Exception::class, $job->getCompensationClass());
-        }
+        $this->assertEquals(Exception::class, $job->getCompensationClass());
+
         $this->assertEquals(['param1' => 'value1'], $job->getArgs());
     }
 

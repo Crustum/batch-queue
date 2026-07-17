@@ -5,6 +5,7 @@ namespace Crustum\BatchQueue\Test\Support\TestJobs;
 
 use Cake\Queue\Job\JobInterface;
 use Cake\Queue\Job\Message;
+use Crustum\BatchQueue\Data\BatchDefinition;
 use Crustum\BatchQueue\Storage\SqlBatchStorage;
 
 /**
@@ -28,7 +29,7 @@ class FailureCallbackJob implements JobInterface
         $storage = new SqlBatchStorage();
         $batch = $storage->getBatch($batchId);
 
-        if (!$batch) {
+        if (!$batch instanceof BatchDefinition) {
             return null;
         }
 

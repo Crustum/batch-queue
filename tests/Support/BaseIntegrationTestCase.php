@@ -8,6 +8,7 @@ use Cake\Core\Configure;
 use Cake\ORM\TableRegistry;
 use Cake\Queue\QueueManager;
 use Cake\TestSuite\TestCase;
+use TestApp\Application;
 
 /**
  * Base Integration Test Case
@@ -33,12 +34,12 @@ abstract class BaseIntegrationTestCase extends TestCase
         parent::setUp();
         $this->setAppNamespace();
 
-        if (!class_exists('TestApp\Application')) {
+        if (!class_exists(Application::class)) {
             require_once dirname(__DIR__) . DS . 'TestApp' . DS . 'Application.php';
         }
 
         $this->configApplication(
-            'TestApp\Application',
+            Application::class,
             [CONFIG],
         );
 

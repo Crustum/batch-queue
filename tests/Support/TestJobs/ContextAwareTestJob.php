@@ -14,6 +14,7 @@ use Interop\Queue\Processor;
 class ContextAwareTestJob implements JobInterface, ContextAwareInterface
 {
     public static array $executedJobs = [];
+
     public static array $contexts = [];
 
     private array $context = [];

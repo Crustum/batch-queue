@@ -153,7 +153,7 @@ class BatchDefinitionTest extends TestCase
         $this->assertEquals(BatchDefinition::TYPE_PARALLEL, $array['type']);
         // Verify jobs structure (format changed after refactoring)
         $this->assertCount(1, $array['jobs']);
-        $this->assertEquals('Crustum\BatchQueue\Test\Support\TestJob', $array['jobs'][0]['class']);
+        $this->assertEquals(TestJob::class, $array['jobs'][0]['class']);
         $this->assertEquals(['test' => 'data'], $array['context']);
         $this->assertEquals(['timeout' => 3600], $array['options']);
         $this->assertEquals('2024-01-01 12:00:00', $array['created']);

@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Crustum\BatchQueue\Test\Support;
 
 use Cake\Core\ContainerInterface;
+use Crustum\BatchQueue\Data\BatchDefinition;
 use Crustum\BatchQueue\Processor\BatchJobProcessor;
 use Crustum\BatchQueue\Processor\ChainedJobProcessor;
 use Crustum\BatchQueue\Storage\BatchStorageInterface;
@@ -212,9 +213,9 @@ trait BatchQueueTestTrait
 
             if ($batch && $batch->type === 'sequential') {
                 return new ChainedJobProcessor($logger, $container);
-            } else {
-                return new BatchJobProcessor($logger, $container);
             }
+
+            return new BatchJobProcessor($logger, $container);
         }
 
         // For non-batch jobs, return null (we can't process without container)
@@ -245,7 +246,7 @@ trait BatchQueueTestTrait
         $storage = new SqlBatchStorage();
         $batch = $storage->getBatch($batchId);
 
-        if (!$batch) {
+        if (!$batch instanceof BatchDefinition) {
             return;
         }
 
@@ -457,6 +458,6 @@ trait BatchQueueTestTrait
     protected function assertBatchSize(int $expected, string $message = ''): void
     {
         $actual = $this->getQueuedJobCount();
-        $this->assertSame($expected, $actual, $message ?: "Expected $expected messages in batch, found $actual");
+        $this->assertSame($expected, $actual, $message ?: "Expected {$expected} messages in batch, found {$actual}");
     }
 }

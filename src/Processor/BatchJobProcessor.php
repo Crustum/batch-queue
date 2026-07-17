@@ -5,6 +5,8 @@ namespace Crustum\BatchQueue\Processor;
 
 use Cake\Queue\Job\Message;
 use Cake\Queue\QueueManager;
+use Crustum\BatchQueue\Data\BatchDefinition;
+use Crustum\BatchQueue\Data\BatchJobDefinition;
 use Crustum\BatchQueue\Service\QueueConfigService;
 use DateTime;
 use Enqueue\Consumption\Result;
@@ -76,7 +78,7 @@ class BatchJobProcessor extends BaseBatchProcessor
             }
 
             $jobRecord = $this->storage->getJobByPosition($batchId, $jobPosition);
-            if (!$jobRecord) {
+            if (!$jobRecord instanceof BatchJobDefinition) {
                 $this->logger->error(__('Job not found by position for batch {0} and position {1}', $batchId, $jobPosition));
 
                 return InteropProcessor::REJECT;
@@ -109,19 +111,19 @@ class BatchJobProcessor extends BaseBatchProcessor
             ]);
 
             return $result;
-        } catch (Throwable $e) {
-            $message->setProperty('jobException', $e);
+        } catch (Throwable $throwable) {
+            $message->setProperty('jobException', $throwable);
             $duration = (int)((microtime(true) * 1000) - $startTime);
 
-            $this->logger->debug(__('Message encountered exception: {0}', $e->getMessage()));
+            $this->logger->debug(__('Message encountered exception: {0}', $throwable->getMessage()));
             $this->dispatchEvent('Processor.message.exception', [
                 'message' => $jobMessage,
-                'exception' => $e,
+                'exception' => $throwable,
                 'duration' => $duration,
             ]);
 
             if (isset($body['args'][0]['batch_id']) && isset($body['args'][0]['job_position'])) {
-                $this->handleJobFailure($body['args'][0]['batch_id'], $jobId ?? 'unknown', $body['args'][0]['job_position'], $e);
+                $this->handleJobFailure($body['args'][0]['batch_id'], $jobId ?? 'unknown', $body['args'][0]['job_position'], $throwable);
             }
 
             return Result::requeue('Exception occurred while processing message');
@@ -145,7 +147,7 @@ class BatchJobProcessor extends BaseBatchProcessor
         $this->storage->updateJobStatus($batchId, $jobId, 'completed', $jobResult);
 
         $batch = $this->storage->getBatch($batchId);
-        if (!$batch) {
+        if (!$batch instanceof BatchDefinition) {
             $this->logger->error(__('Batch not found for job success for batch {0}', $batchId));
 
             return;
@@ -171,7 +173,7 @@ class BatchJobProcessor extends BaseBatchProcessor
      */
     protected function handleJobFailure(string $batchId, string $jobId, int $jobPosition, ?Throwable $error): void
     {
-        $errorMessage = $error ? $error->getMessage() : '';
+        $errorMessage = $error instanceof Throwable ? $error->getMessage() : '';
         $this->logger->error(__('Job failed for batch {0} and job {1} at position {2}: {3}', $batchId, $jobId, $jobPosition, $errorMessage));
 
         $this->storage->updateJobStatus($batchId, $jobId, 'failed', null, $errorMessage);
@@ -191,7 +193,7 @@ class BatchJobProcessor extends BaseBatchProcessor
     {
         $batch = $this->storage->getBatch($batchId);
 
-        if (!$batch) {
+        if (!$batch instanceof BatchDefinition) {
             return;
         }
 
@@ -216,7 +218,7 @@ class BatchJobProcessor extends BaseBatchProcessor
     {
         $batch = $this->storage->getBatch($batchId);
 
-        if (!$batch) {
+        if (!$batch instanceof BatchDefinition) {
             return;
         }
 
@@ -243,7 +245,7 @@ class BatchJobProcessor extends BaseBatchProcessor
         $job = null;
         if (is_array($callback) && isset($callback['class'])) {
             $batch = $this->storage->getBatch($batchId);
-            $callbackPosition = $batch ? $batch->totalJobs : 999;
+            $callbackPosition = $batch instanceof BatchDefinition ? $batch->totalJobs : 999;
 
             $job = [
                 'class' => $callback['class'],
@@ -262,7 +264,7 @@ class BatchJobProcessor extends BaseBatchProcessor
 
         if ($job) {
             $batch = $this->storage->getBatch($batchId);
-            $queueConfig = $batch !== null && $batch->queueConfig !== null ? $batch->queueConfig : QueueConfigService::getQueueConfig('parallel');
+            $queueConfig = $batch instanceof BatchDefinition && $batch->queueConfig !== null ? $batch->queueConfig : QueueConfigService::getQueueConfig('parallel');
             $this->queueJob($job['class'], $job['args'], $queueConfig);
         }
     }

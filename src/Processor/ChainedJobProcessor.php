@@ -98,11 +98,12 @@ class ChainedJobProcessor extends BaseBatchProcessor
             $jobContext = $body['args'][0];
 
             $jobRecord = $this->storage->getJobByPosition($batchId, $jobPosition);
-            if (!$jobRecord) {
+            if (!$jobRecord instanceof BatchJobDefinition) {
                 $this->logger->error(__('Job not found by position for batch {0} and position {1}', $batchId, $jobPosition));
 
                 return InteropProcessor::REJECT;
             }
+
             $jobId = $jobRecord->id;
 
             $messageId = $message->getHeaders()['message_id'] ?? null;
@@ -116,7 +117,7 @@ class ChainedJobProcessor extends BaseBatchProcessor
             $jobId = $messageId;
 
             $batch = $this->storage->getBatch($batchId);
-            if (!$batch) {
+            if (!$batch instanceof BatchDefinition) {
                 $this->logger->error(__('Batch not found for job execution for batch {0}', $batchId));
 
                 return InteropProcessor::REJECT;
@@ -164,14 +165,14 @@ class ChainedJobProcessor extends BaseBatchProcessor
             ]);
 
             return InteropProcessor::ACK;
-        } catch (Throwable $e) {
-            $message->setProperty('jobException', $e);
+        } catch (Throwable $throwable) {
+            $message->setProperty('jobException', $throwable);
             $duration = (int)((microtime(true) * 1000) - $startTime);
 
-            $this->logger->debug(__('Message encountered exception: {0}', $e->getMessage()));
+            $this->logger->debug(__('Message encountered exception: {0}', $throwable->getMessage()));
             $this->dispatchEvent('Processor.message.exception', [
                 'message' => $jobMessage,
-                'exception' => $e,
+                'exception' => $throwable,
                 'duration' => $duration,
             ]);
 
@@ -188,7 +189,7 @@ class ChainedJobProcessor extends BaseBatchProcessor
                     $failureJobClass,
                     $failureCompensation,
                     $failureContext,
-                    $e,
+                    $throwable,
                 );
             }
 
@@ -218,7 +219,7 @@ class ChainedJobProcessor extends BaseBatchProcessor
         }
 
         $batch = $this->storage->getBatch($batchId);
-        if (!$batch) {
+        if (!$batch instanceof BatchDefinition) {
             $this->logger->error(__('Batch not found for job success for batch {0}', $batchId));
 
             return;
@@ -227,10 +228,8 @@ class ChainedJobProcessor extends BaseBatchProcessor
         if ($newCompletedJobs >= $batch->totalJobs) {
             $this->logger->info(__('Chained Batch completed, triggering completion handler for batch {0}', $batchId));
             $this->handleBatchCompletion($batchId);
-        } else {
-            if ($batch->type === 'sequential') {
-                $this->queueNextSequentialJob($batch, $jobId, $jobResult);
-            }
+        } elseif ($batch->type === 'sequential') {
+            $this->queueNextSequentialJob($batch, $jobId, $jobResult);
         }
     }
 
@@ -284,7 +283,7 @@ class ChainedJobProcessor extends BaseBatchProcessor
         Throwable $error,
     ): void {
         $batch = $this->storage->getBatch($batchId);
-        $compensationPosition = $batch ? $batch->totalJobs + 100 : 999;
+        $compensationPosition = $batch instanceof BatchDefinition ? $batch->totalJobs + 100 : 999;
 
         $compensationArgs = [
             'batch_id' => $batchId,
@@ -313,7 +312,7 @@ class ChainedJobProcessor extends BaseBatchProcessor
     {
         $batch = $this->storage->getBatch($batchId);
 
-        if (!$batch) {
+        if (!$batch instanceof BatchDefinition) {
             return;
         }
 
@@ -338,7 +337,7 @@ class ChainedJobProcessor extends BaseBatchProcessor
     {
         $batch = $this->storage->getBatch($batchId);
 
-        if (!$batch) {
+        if (!$batch instanceof BatchDefinition) {
             return;
         }
 
@@ -402,7 +401,7 @@ class ChainedJobProcessor extends BaseBatchProcessor
         $this->logger->info(__('Queueing next sequential job {0} at position {1} for batch {2}', $nextJob['class'], $nextJob['position'], $batch->id));
 
         $freshBatch = $this->storage->getBatch($batch->id);
-        if (!$freshBatch) {
+        if (!$freshBatch instanceof BatchDefinition) {
             $this->logger->error(__('Failed to get fresh batch context for next sequential job in batch {0}', $batch->id));
 
             return;
@@ -426,7 +425,7 @@ class ChainedJobProcessor extends BaseBatchProcessor
     protected function getCompletedJobsForCompensation(string $batchId): array
     {
         $batch = $this->storage->getBatch($batchId);
-        if (!$batch) {
+        if (!$batch instanceof BatchDefinition) {
             return [];
         }
 
@@ -493,7 +492,7 @@ class ChainedJobProcessor extends BaseBatchProcessor
     {
         $completedJobs = $this->getCompletedJobsForCompensation($batch->id);
 
-        if (empty($completedJobs)) {
+        if ($completedJobs === []) {
             $this->logger->info(__('No completed jobs to compensate for batch {0}', $batch->id));
 
             return;
@@ -560,7 +559,7 @@ class ChainedJobProcessor extends BaseBatchProcessor
     ): void {
         if (is_array($callback) && isset($callback['class'])) {
             $batch = $this->storage->getBatch($batchId);
-            $callbackPosition = $batch ? $batch->totalJobs : 999;
+            $callbackPosition = $batch instanceof BatchDefinition ? $batch->totalJobs : 999;
 
             $callbackArgs = array_merge(
                 $callback['args'] ?? [],
@@ -573,7 +572,7 @@ class ChainedJobProcessor extends BaseBatchProcessor
                 ],
             );
 
-            $queueConfig = $batch !== null && $batch->queueConfig !== null ? $batch->queueConfig : QueueConfigService::getQueueConfig('sequential');
+            $queueConfig = $batch instanceof BatchDefinition && $batch->queueConfig !== null ? $batch->queueConfig : QueueConfigService::getQueueConfig('sequential');
             $this->queueJob($callback['class'], $callbackArgs, $queueConfig);
         }
     }

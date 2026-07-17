@@ -15,9 +15,25 @@ use Interop\Queue\Processor;
  */
 class ContextUpdaterAddsJob implements JobInterface, ContextAwareInterface
 {
+    /**
+     * Execution log
+     *
+     * @var array<string, mixed>
+     */
     public static array $executionLog = [];
+
+    /**
+     * Stored contexts
+     *
+     * @var array<array<string, mixed>>
+     */
     public static array $contexts = [];
 
+    /**
+     * Context data
+     *
+     * @var array<string, mixed>
+     */
     private array $context = [];
 
     /**

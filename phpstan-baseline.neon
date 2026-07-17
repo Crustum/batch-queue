@@ -23,9 +23,3 @@ parameters:
 			identifier: function.alreadyNarrowedType
 			count: 1
 			path: src/Service/BatchDispatcher.php
-
-		-
-			message: '#^Variable \$updates in empty\(\) always exists and is not falsy\.$#'
-			identifier: empty.variable
-			count: 1
-			path: src/Storage/RedisBatchStorage.php

@@ -46,10 +46,10 @@ class CommandWorkerTest extends BaseIntegrationTestCase
 
         try {
             $this->exec('queue worker --config=batchjob --queue=batchjob --max-jobs=6 --max-runtime=10');
-        } catch (Exception $e) {
-            echo 'EXCEPTION during worker command: ' . $e->getMessage() . "\n";
-            echo 'Stack trace: ' . $e->getTraceAsString() . "\n";
-            throw $e;
+        } catch (Exception $exception) {
+            echo 'EXCEPTION during worker command: ' . $exception->getMessage() . "\n";
+            echo 'Stack trace: ' . $exception->getTraceAsString() . "\n";
+            throw $exception;
         }
 
         $storage = new SqlBatchStorage();
@@ -76,12 +76,8 @@ class CommandWorkerTest extends BaseIntegrationTestCase
 
         $chainedCount = $this->countMessages('chainedjobs');
         $this->assertEquals(1, $chainedCount, 'Should have 1 chain job queued initially');
+        $this->exec('queue worker --config=chainedjobs --max-jobs=3 --max-runtime=5 -v');
 
-        try {
-            $this->exec('queue worker --config=chainedjobs --max-jobs=3 --max-runtime=5 -v');
-        } catch (Exception $e) {
-            throw $e;
-        }
         $batchData = $storage->getBatch($batchId);
         $this->refreshQM();
 
@@ -90,26 +86,15 @@ class CommandWorkerTest extends BaseIntegrationTestCase
 
         try {
             $this->exec('queue worker --config=chainedjobs --max-jobs=1 --max-runtime=5 -v');
-        } catch (Exception $e) {
-            echo 'EXCEPTION during worker command: ' . $e->getMessage() . "\n";
-            echo 'Stack trace: ' . $e->getTraceAsString() . "\n";
-            throw $e;
+        } catch (Exception $exception) {
+            echo 'EXCEPTION during worker command: ' . $exception->getMessage() . "\n";
+            echo 'Stack trace: ' . $exception->getTraceAsString() . "\n";
+            throw $exception;
         }
 
         $batchData = $storage->getBatch($batchId);
 
         $this->assertEquals('completed', $batchData->status, 'Chain should be completed');
         $this->assertEquals(2, $batchData->completedJobs, 'Both jobs should be completed');
-    }
-
-    private function listAllQueueFiles(): void
-    {
-        $queues = ['default', 'batch', 'batchjob', 'chainedjobs'];
-
-        echo "\n=== All Queue Messages ===\n";
-        foreach ($queues as $queueName) {
-            $count = $this->countMessages($queueName);
-            echo "  Queue '{$queueName}': {$count} messages\n";
-        }
     }
 }

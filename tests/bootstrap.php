@@ -21,6 +21,7 @@ $findRoot = function () {
 if (!defined('DS')) {
     define('DS', DIRECTORY_SEPARATOR);
 }
+
 define('ROOT', $findRoot());
 define('APP_DIR', 'TestApp');
 define('WEBROOT_DIR', 'webroot');
@@ -175,13 +176,14 @@ foreach (Configure::read('Queue') as $key => $data) {
     }
 }
 
-if (class_exists('Cake\Queue\Plugin')) {
+if (class_exists(QueuePlugin::class)) {
     Plugin::getCollection()->add(new QueuePlugin());
 }
 
 if (class_exists('Cake\Enqueue\EnqueuePlugin')) {
     Plugin::getCollection()->add(new EnqueuePlugin());
 }
+
 Resources::addConnection(CakeConnectionFactory::class, [
     'cakephp',
     'cakephpenqueue',

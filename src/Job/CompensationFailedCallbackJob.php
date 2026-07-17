@@ -5,6 +5,7 @@ namespace Crustum\BatchQueue\Job;
 
 use Cake\Queue\Job\JobInterface;
 use Cake\Queue\Job\Message;
+use Crustum\BatchQueue\Data\BatchDefinition;
 use Crustum\BatchQueue\Storage\BatchStorageInterface;
 
 /**
@@ -50,7 +51,7 @@ class CompensationFailedCallbackJob implements JobInterface
 
         $batch = $this->storage->getBatch($originalBatchId);
 
-        if ($batch) {
+        if ($batch instanceof BatchDefinition) {
             $context = $batch->context ?? [];
             $context['compensation_status'] = 'failed';
             $context['compensation_failed_at'] = date('Y-m-d H:i:s');
