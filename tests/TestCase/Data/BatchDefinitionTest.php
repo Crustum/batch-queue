@@ -182,4 +182,33 @@ class BatchDefinitionTest extends TestCase
         $this->assertEquals('json-test', $decoded['id']);
         $this->assertEquals(BatchDefinition::TYPE_PARALLEL, $decoded['type']);
     }
+
+    /**
+     * Null/false job slots are ignored during normalize
+     *
+     * @return void
+     */
+    public function testFilterFalsyJobsOnConstruct(): void
+    {
+        $batch = new BatchDefinition(
+            'falsy-test',
+            BatchDefinition::TYPE_PARALLEL,
+            [null, TestJob::class, false, TestJob::class],
+        );
+
+        $this->assertSame(2, $batch->totalJobs);
+        $this->assertCount(2, $batch->jobs);
+    }
+
+    /**
+     * filterFalsyJobs helper reindexes remaining entries
+     *
+     * @return void
+     */
+    public function testFilterFalsyJobsHelper(): void
+    {
+        $filtered = BatchDefinition::filterFalsyJobs([null, 'a', false, 'b', '']);
+
+        $this->assertSame(['a', 'b', ''], $filtered);
+    }
 }

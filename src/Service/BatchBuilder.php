@@ -3,10 +3,12 @@ declare(strict_types=1);
 
 namespace Crustum\BatchQueue\Service;
 
+use BackedEnum;
 use Cake\Utility\Text;
 use Crustum\BatchQueue\Data\BatchDefinition;
 use Crustum\BatchQueue\Storage\BatchStorageInterface;
 use InvalidArgumentException;
+use UnitEnum;
 
 /**
  * Unified Batch Builder - Single interface for batches and compensation patterns
@@ -163,14 +165,44 @@ final class BatchBuilder
     }
 
     /**
-     * Set queue name for named queue routing
+     * Prepend one or more jobs to the pending batch/chain before dispatch
      *
-     * @param string $queueName Queue name identifier
+     * Accepts a class string, a single job definition (`['class' => ...]` or
+     * compensation pair wrapped as `[[Job::class, Undo::class]]`), or a list of
+     * job definitions (same shapes as `batch()` / `chain()`).
+     *
+     * @param array|string $jobs Job definition(s)
      * @return static
      */
-    public function queue(string $queueName): static
+    public function prepend(array|string $jobs): static
     {
-        $this->queueName = $queueName;
+        $this->jobs = [...$this->normalizeMutableJobs($jobs), ...$this->jobs];
+
+        return $this;
+    }
+
+    /**
+     * Append one or more jobs to the pending batch/chain before dispatch
+     *
+     * @param array|string $jobs Job definition(s)
+     * @return static
+     */
+    public function append(array|string $jobs): static
+    {
+        $this->jobs = [...$this->jobs, ...$this->normalizeMutableJobs($jobs)];
+
+        return $this;
+    }
+
+    /**
+     * Set queue name for named queue routing
+     *
+     * @param \BackedEnum|\UnitEnum|string $queueName Queue name identifier
+     * @return static
+     */
+    public function queue(BackedEnum|UnitEnum|string $queueName): static
+    {
+        $this->queueName = $this->enumToString($queueName);
 
         return $this;
     }
@@ -178,12 +210,12 @@ final class BatchBuilder
     /**
      * Set queue configuration name
      *
-     * @param string $queueConfig Queue configuration name
+     * @param \BackedEnum|\UnitEnum|string|null $queueConfig Queue configuration name
      * @return static
      */
-    public function queueConfig(?string $queueConfig): static
+    public function queueConfig(BackedEnum|UnitEnum|string|null $queueConfig): static
     {
-        $this->queueConfig = $queueConfig;
+        $this->queueConfig = $queueConfig === null ? null : $this->enumToString($queueConfig);
 
         return $this;
     }
@@ -237,6 +269,16 @@ final class BatchBuilder
     }
 
     /**
+     * Get pending job definitions (before dispatch)
+     *
+     * @return array
+     */
+    public function getJobs(): array
+    {
+        return $this->jobs;
+    }
+
+    /**
      * Get batch context
      *
      * @return array Context data
@@ -254,5 +296,43 @@ final class BatchBuilder
     public function getOptions(): array
     {
         return $this->options;
+    }
+
+    /**
+     * Normalize prepend/append input into a list of job definitions
+     *
+     * @param array|string $jobs Job definition(s)
+     * @return array
+     */
+    private function normalizeMutableJobs(array|string $jobs): array
+    {
+        if (is_string($jobs)) {
+            return [$jobs];
+        }
+
+        if (isset($jobs['class'])) {
+            return [$jobs];
+        }
+
+        return BatchDefinition::filterFalsyJobs($jobs);
+    }
+
+    /**
+     * Resolve an enum or string to a string value
+     *
+     * @param \UnitEnum|string $value Enum or string value
+     * @return string
+     */
+    private function enumToString(UnitEnum|string $value): string
+    {
+        if ($value instanceof BackedEnum) {
+            return (string)$value->value;
+        }
+
+        if ($value instanceof UnitEnum) {
+            return $value->name;
+        }
+
+        return $value;
     }
 }

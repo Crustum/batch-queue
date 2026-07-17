@@ -3,12 +3,16 @@ declare(strict_types=1);
 
 namespace Crustum\BatchQueue\Service;
 
+use Cake\Event\EventManager;
 use Cake\Queue\QueueManager;
 use Crustum\BatchQueue\Data\BatchDefinition;
+use Crustum\BatchQueue\Data\Job\CompensatedJobDefinition;
 use Crustum\BatchQueue\Data\Job\JobDefinitionFactory;
+use Crustum\BatchQueue\Event\BatchCanceled;
 use Crustum\BatchQueue\Storage\BatchStorageInterface;
 use InvalidArgumentException;
 use RuntimeException;
+use Throwable;
 
 /**
  * Unified Batch Manager Service
@@ -21,6 +25,7 @@ use RuntimeException;
  * - Batch with compensation: BatchManager::batch([[Job1::class, Undo1::class], Job2::class])
  * - Sequential chain: BatchManager::chain([Step1::class, Step2::class])
  * - Saga with compensation: BatchManager::chain([[Step1::class, Undo1::class], [Step2::class, Undo2::class]])
+ * - Untracked fan-out: BatchManager::bulk([Job1::class, ['class' => Job2::class, 'args' => [...]]])
  */
 class BatchManager
 {
@@ -60,13 +65,20 @@ class BatchManager
      * Jobs can be:
      * - Simple: ['SendEmailJob::class', 'ProcessOrderJob::class']
      * - With compensation: [['SendEmailJob::class', 'CancelEmailJob::class'], 'ProcessOrderJob::class']
+     * - Conditional slots: null/false entries are ignored
      *
      * @param array $jobs Array of job definitions
      * @return \Crustum\BatchQueue\Service\BatchBuilder
      */
     public function batch(array $jobs): BatchBuilder
     {
-        return new BatchBuilder($this->storage, $this->queueName, $this->queueConfig, BatchDefinition::TYPE_PARALLEL, $jobs);
+        return new BatchBuilder(
+            $this->storage,
+            $this->queueName,
+            $this->queueConfig,
+            BatchDefinition::TYPE_PARALLEL,
+            BatchDefinition::filterFalsyJobs($jobs),
+        );
     }
 
     /**
@@ -75,13 +87,76 @@ class BatchManager
      * Jobs can be:
      * - Simple: ['Step1Job::class', 'Step2Job::class']
      * - With compensation: [['Step1Job::class', 'UndoStep1Job::class'], ['Step2Job::class', 'UndoStep2Job::class']]
+     * - Conditional slots: null/false entries are ignored
      *
      * @param array $jobs Array of job definitions in execution order
      * @return \Crustum\BatchQueue\Service\BatchBuilder
      */
     public function chain(array $jobs): BatchBuilder
     {
-        return new BatchBuilder($this->storage, $this->queueName, $this->queueConfig, BatchDefinition::TYPE_SEQUENTIAL, $jobs);
+        return new BatchBuilder(
+            $this->storage,
+            $this->queueName,
+            $this->queueConfig,
+            BatchDefinition::TYPE_SEQUENTIAL,
+            BatchDefinition::filterFalsyJobs($jobs),
+        );
+    }
+
+    /**
+     * Enqueue many independent jobs without batch storage, progress, or callbacks
+     *
+     * Intended for mass fan-out (import/export) where job_batches-style tracking is not needed.
+     * Compensation pairs are not supported — use chain() for sagas.
+     *
+     * @param iterable $jobs Job definitions (same simple formats as batch(), minus compensation)
+     * @param string|null $queueConfig Queue config override (defaults to manager config / parallel default)
+     * @return int Number of jobs enqueued
+     * @throws \InvalidArgumentException If a job definition is invalid or uses compensation
+     */
+    public function bulk(iterable $jobs, ?string $queueConfig = null): int
+    {
+        $queue = $queueConfig
+            ?? $this->queueConfig
+            ?? QueueConfigService::getQueueConfig(BatchDefinition::TYPE_PARALLEL);
+
+        $count = 0;
+        foreach ($jobs as $index => $jobInput) {
+            if ($jobInput === null) {
+                continue;
+            }
+
+            if ($jobInput === false) {
+                continue;
+            }
+
+            if (is_array($jobInput) && count($jobInput) === 2 && !isset($jobInput['class'])) {
+                throw new InvalidArgumentException(
+                    "bulk() does not support compensation pairs at index {$index}; use chain() for sagas.",
+                );
+            }
+
+            try {
+                $definition = JobDefinitionFactory::create($jobInput, BatchDefinition::TYPE_PARALLEL);
+            } catch (InvalidArgumentException $e) {
+                throw new InvalidArgumentException(
+                    "Invalid job definition at index {$index}: {$e->getMessage()}",
+                    $e->getCode(),
+                    $e,
+                );
+            }
+
+            if ($definition instanceof CompensatedJobDefinition) {
+                throw new InvalidArgumentException(
+                    "bulk() does not support compensation pairs at index {$index}; use chain() for sagas.",
+                );
+            }
+
+            BatchDispatcher::queueStandaloneJob($definition->getClass(), $definition->getArgs(), $queue);
+            $count++;
+        }
+
+        return $count;
     }
 
     /**
@@ -92,6 +167,11 @@ class BatchManager
      */
     public function getBatch(string $batchId): ?BatchDefinition
     {
+        $batchId = trim($batchId);
+        if ($batchId === '') {
+            return null;
+        }
+
         return $this->storage->getBatch($batchId);
     }
 
@@ -105,6 +185,11 @@ class BatchManager
      */
     public function addJobs(string $batchId, array $jobs): BatchDefinition
     {
+        $batchId = trim($batchId);
+        if ($batchId === '') {
+            throw new InvalidArgumentException('Batch id must not be empty');
+        }
+
         $batch = $this->storage->getBatch($batchId);
         if (!$batch instanceof BatchDefinition) {
             throw new RuntimeException(__('Batch not found: {0}', $batchId));
@@ -112,6 +197,11 @@ class BatchManager
 
         if (in_array($batch->status, ['completed', 'failed'], true)) {
             throw new RuntimeException(__('Cannot add jobs to {0} batch: {1}', $batch->status, $batchId));
+        }
+
+        $jobs = BatchDefinition::filterFalsyJobs($jobs);
+        if ($jobs === []) {
+            return $batch;
         }
 
         $normalizedJobs = $this->normalizeJobsForBatch($batch, $jobs);
@@ -165,7 +255,7 @@ class BatchManager
      */
     public function getProgress(string $batchId): ?array
     {
-        $batch = $this->storage->getBatch($batchId);
+        $batch = $this->getBatch($batchId);
         if (!$batch instanceof BatchDefinition) {
             return null;
         }
@@ -178,7 +268,7 @@ class BatchManager
             'completed_jobs' => $batch->completedJobs,
             'failed_jobs' => $batch->failedJobs,
             'progress_percentage' => $batch->totalJobs > 0
-                ? round($batch->completedJobs / $batch->totalJobs * 100, 2)
+                ? (int)round($batch->completedJobs / $batch->totalJobs * 100)
                 : 0,
             'has_compensation' => $batch->hasCompensation(),
             'created' => $batch->created,
@@ -190,10 +280,16 @@ class BatchManager
      * Cancel a pending batch (triggers compensation if applicable)
      *
      * @param string $batchId Batch identifier
+     * @param \Throwable|null $exception Optional reason attached to BatchCanceled event
      * @return bool True if batch was cancelled
      */
-    public function cancelBatch(string $batchId): bool
+    public function cancelBatch(string $batchId, ?Throwable $exception = null): bool
     {
+        $batchId = trim($batchId);
+        if ($batchId === '') {
+            return false;
+        }
+
         $batch = $this->storage->getBatch($batchId);
         if (!$batch instanceof BatchDefinition) {
             return false;
@@ -202,6 +298,8 @@ class BatchManager
         if ($batch->hasCompensation() && $batch->completedJobs > 0) {
             $this->triggerCompensation($batch);
         }
+
+        EventManager::instance()->dispatch(new BatchCanceled($batch, $exception));
 
         $this->storage->deleteBatch($batchId);
 
@@ -216,7 +314,7 @@ class BatchManager
      */
     public function compensate(string $batchId): bool
     {
-        $batch = $this->storage->getBatch($batchId);
+        $batch = $this->getBatch($batchId);
         if (!$batch || !$batch->hasCompensation()) {
             return false;
         }

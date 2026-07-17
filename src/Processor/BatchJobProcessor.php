@@ -3,10 +3,12 @@ declare(strict_types=1);
 
 namespace Crustum\BatchQueue\Processor;
 
+use Cake\Event\EventManager;
 use Cake\Queue\Job\Message;
 use Cake\Queue\QueueManager;
 use Crustum\BatchQueue\Data\BatchDefinition;
 use Crustum\BatchQueue\Data\BatchJobDefinition;
+use Crustum\BatchQueue\Event\BatchFinished;
 use Crustum\BatchQueue\Service\QueueConfigService;
 use DateTime;
 use Enqueue\Consumption\Result;
@@ -201,6 +203,10 @@ class BatchJobProcessor extends BaseBatchProcessor
             'status' => 'completed',
             'completed_at' => new DateTime(),
         ]);
+
+        $finishedBatch = $this->storage->getBatch($batchId) ?? $batch;
+        $finishedBatch->status = BatchDefinition::STATUS_COMPLETED;
+        EventManager::instance()->dispatch(new BatchFinished($finishedBatch));
 
         if (isset($batch->options['on_complete'])) {
             $this->executeCallback($batch->options['on_complete'], $batchId, 'completed');

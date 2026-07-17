@@ -116,6 +116,20 @@ final class BatchDefinition
     }
 
     /**
+     * Drop null/false slots so conditional job lists can be passed to batch()/chain()
+     *
+     * @param array $jobs Job definitions
+     * @return array Filtered job definitions (reindexed)
+     */
+    public static function filterFalsyJobs(array $jobs): array
+    {
+        return array_values(array_filter(
+            $jobs,
+            static fn(mixed $job): bool => $job !== null && $job !== false,
+        ));
+    }
+
+    /**
      * Normalize job definitions to consistent format
      *
      * @param array $jobs Job definitions
@@ -123,6 +137,7 @@ final class BatchDefinition
      */
     private function normalizeJobs(array $jobs): array
     {
+        $jobs = self::filterFalsyJobs($jobs);
         $normalized = [];
         $factory = new JobDefinitionFactory();
 
@@ -260,6 +275,8 @@ final class BatchDefinition
      */
     private function validateJobs(array $jobs): void
     {
+        $jobs = self::filterFalsyJobs($jobs);
+
         if ($jobs === []) {
             throw new InvalidArgumentException('Batch must contain at least one job');
         }

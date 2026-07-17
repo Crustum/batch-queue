@@ -3,8 +3,10 @@ declare(strict_types=1);
 
 namespace Crustum\BatchQueue\Service;
 
+use Cake\Event\EventManager;
 use Cake\Queue\QueueManager;
 use Crustum\BatchQueue\Data\BatchDefinition;
+use Crustum\BatchQueue\Event\BatchStarted;
 use Crustum\BatchQueue\Storage\BatchStorageInterface;
 use RuntimeException;
 
@@ -49,6 +51,8 @@ final class BatchDispatcher
         } else {
             self::queueFirstChainJob($batch);
         }
+
+        EventManager::instance()->dispatch(new BatchStarted($batch));
     }
 
     /**
@@ -124,6 +128,19 @@ final class BatchDispatcher
 
         $queueConfig = $batch->queueConfig ?? QueueConfigService::getQueueConfig('parallel');
         self::queueJob($job['class'], $jobContext, $queueConfig);
+    }
+
+    /**
+     * Queue a standalone job (no batch tracking) with Monitor-aware dispatch
+     *
+     * @param string $jobClass Job class to queue
+     * @param array $args Job arguments
+     * @param string $queue Queue configuration name
+     * @return void
+     */
+    public static function queueStandaloneJob(string $jobClass, array $args, string $queue = 'default'): void
+    {
+        self::queueJob($jobClass, $args, $queue);
     }
 
     /**

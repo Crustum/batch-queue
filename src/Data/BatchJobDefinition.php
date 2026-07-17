@@ -15,8 +15,11 @@ use InvalidArgumentException;
 final class BatchJobDefinition
 {
     public const STATUS_PENDING = 'pending';
+
     public const STATUS_RUNNING = 'running';
+
     public const STATUS_COMPLETED = 'completed';
+
     public const STATUS_FAILED = 'failed';
 
     /**
