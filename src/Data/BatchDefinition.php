@@ -246,6 +246,36 @@ final class BatchDefinition
     }
 
     /**
+     * Whether the batch continues after individual job failures
+     *
+     * @return bool
+     */
+    public function allowsFailures(): bool
+    {
+        return (bool)($this->options['allow_failures'] ?? false);
+    }
+
+    /**
+     * Whether every job has reached a terminal outcome (completed or failed)
+     *
+     * @return bool
+     */
+    public function isSettled(): bool
+    {
+        return $this->completedJobs + $this->failedJobs >= $this->totalJobs;
+    }
+
+    /**
+     * Whether the batch itself is in a terminal status
+     *
+     * @return bool
+     */
+    public function isTerminal(): bool
+    {
+        return $this->status === self::STATUS_COMPLETED || $this->status === self::STATUS_FAILED;
+    }
+
+    /**
      * Mark batch as completed
      *
      * @return void

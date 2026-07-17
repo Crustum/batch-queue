@@ -16,12 +16,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `BatchDefinition::filterFalsyJobs()` — `null` / `false` slots ignored in `batch()` / `chain()` / `addJobs()` / normalize
 - Empty / whitespace `batchId` guards on `getBatch`, `addJobs`, and `cancelBatch`
 - `BatchDispatcher::queueStandaloneJob()` for Monitor-aware standalone pushes used by `bulk()`
+- `BatchBuilder::allowFailures(bool $allow = true)` — parallel batches settle when `completed + failed >= total` instead of failing on the first job error
+- `BatchBuilder::onJobFailure(string|array $callback)` — per-job failure callback (job class only)
+- `BatchDefinition::allowsFailures()`, `isSettled()`, `isTerminal()` helpers
 
 ### Changed
 
 - `queue()` / `queueConfig()` accept `BackedEnum|UnitEnum|string` (resolve via `->value` / `->name`)
 - `BatchManager::getProgress()` `progress_percentage` is `int` 0–100 via `(int) round(...)`
 - `Batch::getProgressPercentage()` return type changed from `float` to `int`
+- Parallel strict mode: first job failure marks batch `failed` and fires batch `on_failure` once (idempotent); sibling jobs may still run on the broker; their rows/counters keep updating
+- Parallel `allowFailures`: settle status is `completed` (use `failed_jobs` as the failure signal); fires `BatchFinished`, `on_complete`, and batch `on_failure` once if any job failed
+- `executeCallback` accepts string job class names as well as `['class' => ...]` arrays
 
 ### Fixed
 

@@ -28,7 +28,7 @@ The primary use case for parallel batches is the map-reduce pattern: running the
 
 BatchQueue integrates seamlessly with the CakePHP Queue plugin and works perfectly with monitoring tools like the Monitor plugin. All batch jobs are pushed to the default queue as regular jobs, ensuring full compatibility with existing queue infrastructure.
 
-Key features include parallel batches and sequential chains with a shared `BatchManager` / `BatchBuilder` API, job-specific arguments, context accumulation, and compensation (saga) pairs on sequential jobs. You can expand running batches with `addJobs()`, enqueue untracked work with `bulk()`, build conditional job lists (`null` / `false` slots are ignored), and adjust pending lists with `prepend()` / `append()` before dispatch. Lifecycle Cake events fire when a batch starts, finishes, or is cancelled. Progress is tracked as an integer 0–100%, with SQL or Redis storage and queue routing via string or enum names.
+Key features include parallel batches and sequential chains with a shared `BatchManager` / `BatchBuilder` API, job-specific arguments, context accumulation, and compensation (saga) pairs on sequential jobs. You can expand running batches with `addJobs()`, enqueue untracked work with `bulk()`, build conditional job lists (`null` / `false` slots are ignored), and adjust pending lists with `prepend()` / `append()` before dispatch. Parallel batches support strict fail-fast accounting or `allowFailures()` settle-when-done mode. Lifecycle Cake events fire when a batch starts, finishes, or is cancelled. Progress is tracked as an integer 0–100%, with SQL or Redis storage and queue routing via string or enum names.
 
 The plugin handles job execution, failure tracking, and batch completion automatically.
 
@@ -836,6 +836,44 @@ class BatchFailureJob implements JobInterface
 
 Callbacks must be job class names or job definition arrays. Closures are not supported because callback jobs are queued.
 
+### Parallel Failure Modes
+
+By default, parallel batches use **strict** failure accounting: the first failed job marks the batch `failed`, fires `onFailure` once, and does **not** run `onComplete` or dispatch `BatchFinished`. Remaining queue messages may still execute (the broker is not purged in v1); their job rows and counters are still updated for observability.
+
+Use `allowFailures()` when you want the batch to wait until every job has succeeded or failed, then settle:
+
+```php
+$batchId = $batchManager->batch([
+    ['class' => ProcessItemJob::class, 'args' => ['id' => 1]],
+    ['class' => ProcessItemJob::class, 'args' => ['id' => 2]],
+    ['class' => ProcessItemJob::class, 'args' => ['id' => 3]],
+])
+->allowFailures()
+->onJobFailure([
+    'class' => PerJobFailureJob::class,
+])
+->onComplete([
+    'class' => BatchSettledJob::class,
+])
+->onFailure([
+    'class' => BatchHadFailuresJob::class,
+])
+->dispatch();
+```
+
+Under `allowFailures()`:
+
+| When | What runs |
+|---|---|
+| Each job failure | Optional `onJobFailure` callback (once per failed job) |
+| `completed + failed >= total` | Batch status set to `completed`; `BatchFinished` fires; `onComplete` runs if set |
+| Settled with `failed_jobs > 0` | Batch `onFailure` runs once (in addition to `onComplete`) |
+| Settled with `failed_jobs === 0` | `onComplete` only |
+
+Inspect `failed_jobs` on the batch (or in callback args) to branch on partial failure. Status stays `completed` after settle so progress UIs treat the batch as finished; use the counter as the failure signal.
+
+`allowFailures()` is parallel-only. Calling it on a sequential chain, or combining it with compensation pairs, throws `InvalidArgumentException`.
+
 ### Retry and Timeout
 
 ```php
@@ -854,7 +892,7 @@ BatchQueue dispatches CakePHP events for batch lifecycle observers (metrics, log
 | Event name | Class | When |
 |---|---|---|
 | `BatchQueue.BatchStarted` | `Crustum\BatchQueue\Event\BatchStarted` | After jobs are first queued for a new batch |
-| `BatchQueue.BatchFinished` | `Crustum\BatchQueue\Event\BatchFinished` | When the batch is marked completed |
+| `BatchQueue.BatchFinished` | `Crustum\BatchQueue\Event\BatchFinished` | When the batch reaches a terminal finished state (`completed`, including `allowFailures` settle) |
 | `BatchQueue.BatchCanceled` | `Crustum\BatchQueue\Event\BatchCanceled` | When `cancelBatch()` runs (before storage delete) |
 
 ```php

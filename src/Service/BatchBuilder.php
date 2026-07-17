@@ -137,6 +137,47 @@ final class BatchBuilder
     }
 
     /**
+     * Allow parallel batch jobs to fail without failing the batch immediately
+     *
+     * When true, the batch settles when completed + failed reaches total jobs.
+     * Not supported for sequential chains or jobs with compensation.
+     *
+     * @param bool $allow Whether to allow individual job failures
+     * @return static
+     * @throws \InvalidArgumentException
+     */
+    public function allowFailures(bool $allow = true): static
+    {
+        if ($allow) {
+            $this->assertAllowFailuresCompatible();
+        }
+
+        $this->options['allow_failures'] = $allow;
+
+        return $this;
+    }
+
+    /**
+     * Set per-job failure callback for parallel batches (job class only)
+     *
+     * Invoked once for each failed job. Typically used with allowFailures(true).
+     *
+     * @param array|string $callback Callback definition
+     * @return static
+     * @throws \InvalidArgumentException
+     */
+    public function onJobFailure(string|array $callback): static
+    {
+        if (is_callable($callback) && !is_string($callback)) {
+            throw new InvalidArgumentException('Closures cannot be used as callbacks in queue systems. Use class names or job definitions.');
+        }
+
+        $this->options['on_job_failure'] = $callback;
+
+        return $this;
+    }
+
+    /**
      * Set retry configuration
      *
      * @param int $maxRetries Maximum number of retries
@@ -232,6 +273,10 @@ final class BatchBuilder
             throw new InvalidArgumentException('Cannot dispatch empty batch');
         }
 
+        if (($this->options['allow_failures'] ?? false) === true) {
+            $this->assertAllowFailuresCompatible();
+        }
+
         $resolvedQueueConfig = $this->queueConfig;
         if ($resolvedQueueConfig === null && $this->queueName !== null) {
             $resolvedQueueConfig = QueueConfigService::getQueueConfigForNamedQueue($this->queueName);
@@ -315,6 +360,57 @@ final class BatchBuilder
         }
 
         return BatchDefinition::filterFalsyJobs($jobs);
+    }
+
+    /**
+     * Guard allowFailures against sequential chains and compensation pairs
+     *
+     * @return void
+     * @throws \InvalidArgumentException
+     */
+    private function assertAllowFailuresCompatible(): void
+    {
+        if ($this->type === BatchDefinition::TYPE_SEQUENTIAL) {
+            throw new InvalidArgumentException(
+                'allowFailures is not supported for sequential chains. Use parallel batches instead.',
+            );
+        }
+
+        if ($this->jobsIncludeCompensation()) {
+            throw new InvalidArgumentException(
+                'allowFailures cannot be combined with compensation jobs.',
+            );
+        }
+    }
+
+    /**
+     * Detect compensation pairs in pending (pre-normalize) job definitions
+     *
+     * @return bool
+     */
+    private function jobsIncludeCompensation(): bool
+    {
+        foreach ($this->jobs as $job) {
+            if (!is_array($job)) {
+                continue;
+            }
+
+            if (isset($job['compensation'])) {
+                return true;
+            }
+
+            if (
+                !isset($job['class'])
+                && count($job) === 2
+                && isset($job[0], $job[1])
+                && is_string($job[0])
+                && is_string($job[1])
+            ) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

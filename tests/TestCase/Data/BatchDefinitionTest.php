@@ -211,4 +211,28 @@ class BatchDefinitionTest extends TestCase
 
         $this->assertSame(['a', 'b', ''], $filtered);
     }
+
+    /**
+     * @return void
+     */
+    public function testAllowsFailuresAndSettledHelpers(): void
+    {
+        $batch = new BatchDefinition(
+            'settle-1',
+            BatchDefinition::TYPE_PARALLEL,
+            [TestJob::class, TestJob::class, TestJob::class],
+            options: ['allow_failures' => true],
+        );
+
+        $this->assertTrue($batch->allowsFailures());
+        $this->assertFalse($batch->isSettled());
+        $this->assertFalse($batch->isTerminal());
+
+        $batch->completedJobs = 2;
+        $batch->failedJobs = 1;
+        $this->assertTrue($batch->isSettled());
+
+        $batch->markCompleted();
+        $this->assertTrue($batch->isTerminal());
+    }
 }

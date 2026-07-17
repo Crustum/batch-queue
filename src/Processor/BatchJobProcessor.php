@@ -11,7 +11,6 @@ use Crustum\BatchQueue\Data\BatchJobDefinition;
 use Crustum\BatchQueue\Event\BatchFinished;
 use Crustum\BatchQueue\Service\QueueConfigService;
 use DateTime;
-use Enqueue\Consumption\Result;
 use Interop\Queue\Context;
 use Interop\Queue\Message as QueueMessage;
 use Interop\Queue\Processor as InteropProcessor;
@@ -25,6 +24,11 @@ use Throwable;
  * 1. Runs on the default queue as a regular job
  * 2. Executes individual jobs within parallel batches
  * 3. Tracks batch progress and handles completion
+ *
+ * Failure modes (parallel only):
+ * - Strict (default): first job failure marks the batch failed and fires on_failure once.
+ *   Sibling jobs may still run on the broker; their rows/counters are updated for observability.
+ * - allowFailures: jobs keep failing/succeeding until completed + failed >= total, then settle.
  */
 class BatchJobProcessor extends BaseBatchProcessor
 {
@@ -128,7 +132,7 @@ class BatchJobProcessor extends BaseBatchProcessor
                 $this->handleJobFailure($body['args'][0]['batch_id'], $jobId ?? 'unknown', $body['args'][0]['job_position'], $throwable);
             }
 
-            return Result::requeue('Exception occurred while processing message');
+            return InteropProcessor::ACK;
         }
     }
 
@@ -156,8 +160,23 @@ class BatchJobProcessor extends BaseBatchProcessor
         }
 
         $newCompletedJobs = $this->storage->incrementCompletedJob($batchId, $jobId);
+        $batch = $this->storage->getBatch($batchId) ?? $batch;
+        $batch->completedJobs = $newCompletedJobs;
 
         $this->logger->info(__('Batch progress updated for batch {0}: {1} of {2} jobs completed', $batchId, $newCompletedJobs, $batch->totalJobs));
+
+        if ($batch->allowsFailures()) {
+            if ($batch->isSettled()) {
+                $this->settleBatchAllowingFailures($batchId);
+            }
+
+            return;
+        }
+
+        if ($batch->isTerminal()) {
+            return;
+        }
+
         if ($newCompletedJobs >= $batch->totalJobs) {
             $this->logger->info(__('Batch completed, triggering completion handler for batch {0}', $batchId));
             $this->handleBatchCompletion($batchId);
@@ -182,7 +201,74 @@ class BatchJobProcessor extends BaseBatchProcessor
         $newFailedJobs = $this->storage->incrementFailedJob($batchId, $jobId);
         $this->logger->info(__('Failed job counter incremented {0} for batch {1}', $newFailedJobs, $batchId));
 
-        $this->handleBatchFailure($batchId, $errorMessage);
+        $batch = $this->storage->getBatch($batchId);
+        if (!$batch instanceof BatchDefinition) {
+            return;
+        }
+
+        $batch->failedJobs = $newFailedJobs;
+
+        if (isset($batch->options['on_job_failure'])) {
+            $this->executeCallback(
+                $batch->options['on_job_failure'],
+                $batchId,
+                'failed',
+                $errorMessage,
+                [
+                    'job_id' => $jobId,
+                    'failed_job_position' => $jobPosition,
+                ],
+            );
+        }
+
+        if ($batch->allowsFailures()) {
+            if ($batch->isSettled()) {
+                $this->settleBatchAllowingFailures($batchId);
+            }
+
+            return;
+        }
+
+        $this->handleBatchFailureOnce($batchId, $errorMessage);
+    }
+
+    /**
+     * Settle a parallel batch that allows failures once all jobs are accounted for
+     *
+     * Status is always completed; failed_jobs signals partial failure.
+     * Fires BatchFinished, on_complete, and on_failure (if any failed) once.
+     *
+     * @param string $batchId Batch ID
+     * @return void
+     */
+    protected function settleBatchAllowingFailures(string $batchId): void
+    {
+        $batch = $this->storage->getBatch($batchId);
+        if (!$batch instanceof BatchDefinition || $batch->isTerminal()) {
+            return;
+        }
+
+        $this->storage->updateBatch($batchId, [
+            'status' => BatchDefinition::STATUS_COMPLETED,
+            'completed_at' => new DateTime(),
+        ]);
+
+        $finishedBatch = $this->storage->getBatch($batchId) ?? $batch;
+        $finishedBatch->status = BatchDefinition::STATUS_COMPLETED;
+        EventManager::instance()->dispatch(new BatchFinished($finishedBatch));
+
+        if (isset($batch->options['on_complete'])) {
+            $this->executeCallback($batch->options['on_complete'], $batchId, 'completed');
+        }
+
+        if ($finishedBatch->failedJobs > 0 && isset($batch->options['on_failure'])) {
+            $this->executeCallback(
+                $batch->options['on_failure'],
+                $batchId,
+                'failed',
+                sprintf('%d of %d jobs failed', $finishedBatch->failedJobs, $finishedBatch->totalJobs),
+            );
+        }
     }
 
     /**
@@ -195,12 +281,12 @@ class BatchJobProcessor extends BaseBatchProcessor
     {
         $batch = $this->storage->getBatch($batchId);
 
-        if (!$batch instanceof BatchDefinition) {
+        if (!$batch instanceof BatchDefinition || $batch->isTerminal()) {
             return;
         }
 
         $this->storage->updateBatch($batchId, [
-            'status' => 'completed',
+            'status' => BatchDefinition::STATUS_COMPLETED,
             'completed_at' => new DateTime(),
         ]);
 
@@ -214,19 +300,24 @@ class BatchJobProcessor extends BaseBatchProcessor
     }
 
     /**
-     * Handle batch failure - execute failure callback and trigger compensation
+     * Mark batch failed and fire on_failure once (strict parallel mode)
      *
      * @param string $batchId Batch ID
      * @param string $error Error message
      * @return void
      */
-    protected function handleBatchFailure(string $batchId, string $error): void
+    protected function handleBatchFailureOnce(string $batchId, string $error): void
     {
         $batch = $this->storage->getBatch($batchId);
 
-        if (!$batch instanceof BatchDefinition) {
+        if (!$batch instanceof BatchDefinition || $batch->isTerminal()) {
             return;
         }
+
+        $this->storage->updateBatch($batchId, [
+            'status' => BatchDefinition::STATUS_FAILED,
+            'completed_at' => new DateTime(),
+        ]);
 
         if (isset($batch->options['on_failure'])) {
             $this->executeCallback($batch->options['on_failure'], $batchId, 'failed', $error);
@@ -234,12 +325,13 @@ class BatchJobProcessor extends BaseBatchProcessor
     }
 
     /**
-     * Execute callback (job or webhook)
+     * Execute callback (job class string or job definition array)
      *
      * @param array|string $callback Callback definition
      * @param string $batchId Batch ID
      * @param string $status Batch status
      * @param string|null $error Error message if applicable
+     * @param array<string, mixed> $extraArgs Extra args merged into the callback job payload
      * @return void
      */
     protected function executeCallback(
@@ -247,32 +339,35 @@ class BatchJobProcessor extends BaseBatchProcessor
         string $batchId,
         string $status,
         ?string $error = null,
+        array $extraArgs = [],
     ): void {
-        $job = null;
-        if (is_array($callback) && isset($callback['class'])) {
-            $batch = $this->storage->getBatch($batchId);
-            $callbackPosition = $batch instanceof BatchDefinition ? $batch->totalJobs : 999;
-
-            $job = [
-                'class' => $callback['class'],
-                'args' => array_merge(
-                    $callback['args'] ?? [],
-                    [
-                        'batch_id' => $batchId,
-                        'status' => $status,
-                        'error' => $error,
-                        'job_position' => $callbackPosition,
-                        'is_callback' => true,
-                    ],
-                ),
-            ];
+        if (is_string($callback)) {
+            $callback = ['class' => $callback, 'args' => []];
         }
 
-        if ($job) {
-            $batch = $this->storage->getBatch($batchId);
-            $queueConfig = $batch instanceof BatchDefinition && $batch->queueConfig !== null ? $batch->queueConfig : QueueConfigService::getQueueConfig('parallel');
-            $this->queueJob($job['class'], $job['args'], $queueConfig);
+        if (!isset($callback['class'])) {
+            return;
         }
+
+        $batch = $this->storage->getBatch($batchId);
+        $callbackPosition = $batch instanceof BatchDefinition ? $batch->totalJobs : 999;
+
+        $args = array_merge(
+            $callback['args'] ?? [],
+            [
+                'batch_id' => $batchId,
+                'status' => $status,
+                'error' => $error,
+                'job_position' => $callbackPosition,
+                'is_callback' => true,
+            ],
+            $extraArgs,
+        );
+
+        $queueConfig = $batch instanceof BatchDefinition && $batch->queueConfig !== null
+            ? $batch->queueConfig
+            : QueueConfigService::getQueueConfig('parallel');
+        $this->queueJob($callback['class'], $args, $queueConfig);
     }
 
     /**

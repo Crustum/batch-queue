@@ -11,6 +11,7 @@ use Crustum\BatchQueue\Storage\BatchStorageInterface;
 use Crustum\BatchQueue\Test\Support\TestJob;
 use Crustum\BatchQueue\Test\Support\TestQueueConfig;
 use Crustum\BatchQueue\Test\Support\TestQueueName;
+use InvalidArgumentException;
 use ReflectionProperty;
 
 /**
@@ -123,5 +124,89 @@ class BatchBuilderTest extends TestCase
 
         $this->assertIsInt($progress['progress_percentage']);
         $this->assertSame(33, $progress['progress_percentage']);
+    }
+
+    /**
+     * @return void
+     */
+    public function testAllowFailuresSetsOption(): void
+    {
+        $builder = $this->parallelBuilder([TestJob::class])->allowFailures();
+
+        $this->assertTrue($builder->getOptions()['allow_failures']);
+    }
+
+    /**
+     * @return void
+     */
+    public function testAllowFailuresFalseClearsMode(): void
+    {
+        $builder = $this->parallelBuilder([TestJob::class])
+            ->allowFailures(true)
+            ->allowFailures(false);
+
+        $this->assertFalse($builder->getOptions()['allow_failures']);
+    }
+
+    /**
+     * @return void
+     */
+    public function testOnJobFailureSetsOption(): void
+    {
+        $builder = $this->parallelBuilder([TestJob::class])
+            ->allowFailures()
+            ->onJobFailure(TestJob::class);
+
+        $this->assertSame(TestJob::class, $builder->getOptions()['on_job_failure']);
+    }
+
+    /**
+     * @return void
+     */
+    public function testAllowFailuresRejectsSequential(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('sequential');
+
+        $this->builder([TestJob::class])->allowFailures();
+    }
+
+    /**
+     * @return void
+     */
+    public function testAllowFailuresRejectsCompensationPairs(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('compensation');
+
+        $this->parallelBuilder([[TestJob::class, TestJob::class]])->allowFailures();
+    }
+
+    /**
+     * @return void
+     */
+    public function testDispatchRejectsAllowFailuresAfterPrependCompensation(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('compensation');
+
+        $this->parallelBuilder([TestJob::class])
+            ->allowFailures()
+            ->prepend([[TestJob::class, TestJob::class]])
+            ->dispatch();
+    }
+
+    /**
+     * @return \Crustum\BatchQueue\Service\BatchBuilder
+     */
+    private function parallelBuilder(array $jobs = []): BatchBuilder
+    {
+        return new BatchBuilder(
+            $this->storage,
+            null,
+            'test_queue',
+            BatchDefinition::TYPE_PARALLEL,
+            $jobs,
+        );
     }
 }
