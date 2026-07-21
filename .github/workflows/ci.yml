@@ -94,7 +94,7 @@ jobs:
         export REDIS_PORT=6379
         if [[ "${{ matrix.db-type }}" == 'mysql' ]]; then export db_dsn='mysql://root:root@127.0.0.1:3306/rhythm_test?encoding=utf8mb4&timezone=UTC&cacheMetadata=true&quoteIdentifiers=true&persistent=false'; fi
         if [[ "${{ matrix.db-type }}" == 'pgsql' ]]; then export db_dsn='postgres://postgres:postgres@127.0.0.1:5432/rhythm_test?encoding=utf8&timezone=UTC&cacheMetadata=true&quoteIdentifiers=true&persistent=false'; fi
-        vendor/bin/phpunit --configuration=phpunit.xml --display-deprecations --display-incomplete --display-skipped --coverage-clover=coverage.xml
+        vendor/bin/phpunit --configuration=phpunit.xml.dist --display-deprecations --display-incomplete --display-skipped --coverage-clover=coverage.xml
 
     - name: Run PHPUnit without coverage
       if: matrix.php-version != '8.3' || matrix.db-type != 'mysql'
@@ -103,7 +103,7 @@ jobs:
         export REDIS_PORT=6379
         if [[ "${{ matrix.db-type }}" == 'mysql' ]]; then export db_dsn='mysql://root:root@127.0.0.1:3306/rhythm_test?encoding=utf8mb4&timezone=UTC&cacheMetadata=true&quoteIdentifiers=true&persistent=false'; fi
         if [[ "${{ matrix.db-type }}" == 'pgsql' ]]; then export db_dsn='postgres://postgres:postgres@127.0.0.1:5432/rhythm_test?encoding=utf8&timezone=UTC&cacheMetadata=true&quoteIdentifiers=true&persistent=false'; fi
-        vendor/bin/phpunit --configuration=phpunit.xml
+        vendor/bin/phpunit --configuration=phpunit.xml.dist
 
     - name: Submit code coverage
       if: matrix.php-version == '8.3' && matrix.db-type == 'mysql'

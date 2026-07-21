@@ -55,6 +55,7 @@ class BatchesTable extends Table
             'className' => 'Crustum/BatchQueue.BatchJobs',
             'dependent' => true,
             'cascadeCallbacks' => true,
+            'strategy' => 'select',
         ]);
     }
 
