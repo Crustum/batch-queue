@@ -3,10 +3,12 @@ declare(strict_types=1);
 
 namespace Crustum\BatchQueue\Storage;
 
+use Cake\Database\Driver\Postgres;
+use Cake\Database\Expression\QueryExpression;
 use Cake\ORM\Locator\LocatorAwareTrait;
+use Cake\ORM\Query\SelectQuery;
 use Crustum\BatchQueue\Data\BatchDefinition;
 use Crustum\BatchQueue\Data\BatchJobDefinition;
-use Crustum\BatchQueue\Model\Entity\Batch;
 use Crustum\BatchQueue\Model\Table\BatchesTable;
 use Crustum\BatchQueue\Model\Table\BatchJobsTable;
 use DateTime;
@@ -373,35 +375,13 @@ class SqlBatchStorage implements BatchStorageInterface
         $query = $this->batchesTable->find()
             ->contain(['BatchJobs']);
 
-        if (isset($filters['status']) && is_string($filters['status'])) {
-            $query->where(['status' => $filters['status']]);
-        }
-
-        if (isset($filters['type']) && is_string($filters['type'])) {
-            $query->where(['type' => $filters['type']]);
-        }
-
-        if (isset($filters['created_after']) && $filters['created_after'] instanceof DateTime) {
-            $query->where(['created >=' => $filters['created_after']]);
-        }
-
-        if (isset($filters['created_before']) && $filters['created_before'] instanceof DateTime) {
-            $query->where(['created <=' => $filters['created_before']]);
-        }
+        $this->applyBatchListFilters($query, $filters);
 
         $query->limit($limit)->offset($offset);
         $query->orderBy(['created' => 'DESC']);
 
         /** @var list<\Crustum\BatchQueue\Model\Entity\Batch> $batches */
         $batches = $query->toArray();
-
-        if (isset($filters['has_compensation']) && $filters['has_compensation'] === true) {
-            $batches = array_filter($batches, function (Batch $batch): bool {
-                $definition = $this->batchesTable->toDefinition($batch);
-
-                return $definition->hasCompensation();
-            });
-        }
 
         return array_map(
             $this->batchesTable->toDefinition(...),
@@ -415,7 +395,20 @@ class SqlBatchStorage implements BatchStorageInterface
     public function countBatches(array $filters = []): int
     {
         $query = $this->batchesTable->find();
+        $this->applyBatchListFilters($query, $filters);
 
+        return $query->count();
+    }
+
+    /**
+     * Apply shared list/count filters to a batches query.
+     *
+     * @param \Cake\ORM\Query\SelectQuery $query Batches query
+     * @param array<string, mixed> $filters Filter criteria
+     * @return void
+     */
+    protected function applyBatchListFilters(SelectQuery $query, array $filters): void
+    {
         if (isset($filters['status']) && is_string($filters['status'])) {
             $query->where(['status' => $filters['status']]);
         }
@@ -433,18 +426,37 @@ class SqlBatchStorage implements BatchStorageInterface
         }
 
         if (isset($filters['has_compensation']) && $filters['has_compensation'] === true) {
-            $subquery = $this->batchJobsTable->find()
-                ->select(['batch_id'])
-                ->where(fn($exp) => $exp->or([
-                    $exp->like('payload', '%"compensation":%'),
-                    $exp->like('payload', "%'compensation':%"),
-                ]))
-                ->groupBy(['batch_id']);
-
-            $query->where(fn($exp) => $exp->in($this->batchesTable->getAlias() . '.id', $subquery));
+            $this->applyHasCompensationFilter($query);
         }
+    }
 
-        return $query->count();
+    /**
+     * Restrict to batches that have at least one job with a compensation class in payload.
+     *
+     * Postgres stores payload as json; LIKE requires an explicit text cast.
+     *
+     * @param \Cake\ORM\Query\SelectQuery $query Batches query
+     * @return void
+     */
+    protected function applyHasCompensationFilter(SelectQuery $query): void
+    {
+        $castType = $this->batchJobsTable->getConnection()->getDriver() instanceof Postgres
+            ? 'text'
+            : 'char';
+
+        $subquery = $this->batchJobsTable->find()
+            ->select(['batch_id'])
+            ->where(function (QueryExpression $exp, SelectQuery $q) use ($castType) {
+                $payloadText = $q->func()->cast('payload', $castType);
+
+                return $exp->like($payloadText, '%"compensation":"%');
+            })
+            ->groupBy(['batch_id']);
+
+        $alias = $this->batchesTable->getAlias();
+        $query->where(
+            fn(QueryExpression $exp): QueryExpression => $exp->in($alias . '.id', $subquery),
+        );
     }
 
     /**
