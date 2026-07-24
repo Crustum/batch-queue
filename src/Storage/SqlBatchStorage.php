@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Crustum\BatchQueue\Storage;
 
+use Cake\Database\Driver\Mysql;
 use Cake\Database\Driver\Postgres;
 use Cake\Database\Expression\QueryExpression;
 use Cake\ORM\Locator\LocatorAwareTrait;
@@ -433,23 +434,34 @@ class SqlBatchStorage implements BatchStorageInterface
     /**
      * Restrict to batches that have at least one job with a compensation class in payload.
      *
-     * Postgres stores payload as json; LIKE requires an explicit text cast.
+     * Uses JSON path extraction. Do not CAST json AS char on MySQL (defaults to length 30).
      *
      * @param \Cake\ORM\Query\SelectQuery $query Batches query
      * @return void
      */
     protected function applyHasCompensationFilter(SelectQuery $query): void
     {
-        $castType = $this->batchJobsTable->getConnection()->getDriver() instanceof Postgres
-            ? 'text'
-            : 'char';
+        $driver = $this->batchJobsTable->getConnection()->getDriver();
 
         $subquery = $this->batchJobsTable->find()
             ->select(['batch_id'])
-            ->where(function (QueryExpression $exp, SelectQuery $q) use ($castType) {
-                $payloadText = $q->func()->cast('payload', $castType);
+            ->where(function (QueryExpression $exp, SelectQuery $q) use ($driver) {
+                if ($driver instanceof Postgres) {
+                    return $exp->and([
+                        $q->expr("payload->>'compensation' IS NOT NULL"),
+                        $q->expr("payload->>'compensation' <> ''"),
+                    ]);
+                }
 
-                return $exp->like($payloadText, '%"compensation":"%');
+                if ($driver instanceof Mysql) {
+                    return $q->expr("JSON_TYPE(JSON_EXTRACT(payload, '$.compensation')) = 'STRING'");
+                }
+
+                return $exp->and([
+                    $q->expr("json_extract(payload, '$.compensation') IS NOT NULL"),
+                    $q->expr("json_extract(payload, '$.compensation') <> ''"),
+                    $q->expr("json_extract(payload, '$.compensation') <> 'null'"),
+                ]);
             })
             ->groupBy(['batch_id']);
 
@@ -709,7 +721,7 @@ class SqlBatchStorage implements BatchStorageInterface
                         'job_id' => $jobId,
                         'position' => $position,
                         'status' => 'pending',
-                        'payload' => json_encode($jobData),
+                        'payload' => $jobData,
                     ]);
                 }
 
