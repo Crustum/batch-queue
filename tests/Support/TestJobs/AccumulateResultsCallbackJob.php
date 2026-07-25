@@ -6,6 +6,7 @@ namespace Crustum\BatchQueue\Test\Support\TestJobs;
 use Cake\Queue\Job\JobInterface;
 use Cake\Queue\Job\Message;
 use Cake\Queue\Queue\Processor;
+use Crustum\BatchQueue\Data\BatchDefinition;
 use Crustum\BatchQueue\ResultAwareInterface;
 use Crustum\BatchQueue\Storage\SqlBatchStorage;
 
@@ -32,7 +33,7 @@ class AccumulateResultsCallbackJob implements JobInterface, ResultAwareInterface
         $storage = new SqlBatchStorage();
         $batch = $storage->getBatch($batchId);
 
-        if (!$batch) {
+        if (!$batch instanceof BatchDefinition) {
             return Processor::ACK;
         }
 

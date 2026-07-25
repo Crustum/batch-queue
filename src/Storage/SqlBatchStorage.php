@@ -3,7 +3,11 @@ declare(strict_types=1);
 
 namespace Crustum\BatchQueue\Storage;
 
+use Cake\Database\Driver\Mysql;
+use Cake\Database\Driver\Postgres;
+use Cake\Database\Expression\QueryExpression;
 use Cake\ORM\Locator\LocatorAwareTrait;
+use Cake\ORM\Query\SelectQuery;
 use Crustum\BatchQueue\Data\BatchDefinition;
 use Crustum\BatchQueue\Data\BatchJobDefinition;
 use Crustum\BatchQueue\Model\Table\BatchesTable;
@@ -23,6 +27,7 @@ class SqlBatchStorage implements BatchStorageInterface
     use LocatorAwareTrait;
 
     protected BatchesTable $batchesTable;
+
     protected BatchJobsTable $batchJobsTable;
 
     /**
@@ -63,10 +68,11 @@ class SqlBatchStorage implements BatchStorageInterface
                 $batch = $this->batchesTable->get($batchId);
 
                 $batch = $this->batchesTable->patchEntity($batch, $updates);
+
                 $this->batchesTable->saveOrFail($batch);
             });
-        } catch (Throwable $e) {
-            throw new RuntimeException(__('Failed to update batch: {0}', $batchId), 0, $e);
+        } catch (Throwable $throwable) {
+            throw new RuntimeException(__('Failed to update batch: {0}', $batchId), 0, $throwable);
         }
     }
 
@@ -79,7 +85,7 @@ class SqlBatchStorage implements BatchStorageInterface
             $batch = $this->batchesTable->get($batchId, contain: ['BatchJobs']);
 
             return $this->batchesTable->toDefinition($batch);
-        } catch (Throwable $e) {
+        } catch (Throwable) {
             return null;
         }
     }
@@ -89,7 +95,7 @@ class SqlBatchStorage implements BatchStorageInterface
      */
     public function markJobComplete(string $batchId, string $jobId, mixed $result): bool
     {
-        return $this->batchesTable->getConnection()->transactional(function () use ($batchId, $jobId, $result) {
+        return $this->batchesTable->getConnection()->transactional(function () use ($batchId, $jobId, $result): bool {
             $this->batchJobsTable->markCompleted($batchId, $jobId, $result);
 
             $completedCount = $this->batchesTable->incrementCounter($batchId, 'completed_jobs');
@@ -113,7 +119,7 @@ class SqlBatchStorage implements BatchStorageInterface
      */
     public function markJobCompleteById(string $batchId, string $dbJobId, mixed $result): bool
     {
-        return $this->batchesTable->getConnection()->transactional(function () use ($batchId, $dbJobId, $result) {
+        return $this->batchesTable->getConnection()->transactional(function () use ($batchId, $dbJobId, $result): bool {
             $this->batchJobsTable->markCompletedById($batchId, $dbJobId, $result);
 
             $completedCount = $this->batchesTable->incrementCounter($batchId, 'completed_jobs');
@@ -137,7 +143,7 @@ class SqlBatchStorage implements BatchStorageInterface
      */
     public function markJobFailed(string $batchId, string $jobId, Throwable $error): bool
     {
-        return $this->batchesTable->getConnection()->transactional(function () use ($batchId, $jobId, $error) {
+        return $this->batchesTable->getConnection()->transactional(function () use ($batchId, $jobId, $error): bool {
             $errorData = [
                 'message' => $error->getMessage(),
                 'file' => $error->getFile(),
@@ -167,7 +173,7 @@ class SqlBatchStorage implements BatchStorageInterface
      */
     public function markJobFailedById(string $batchId, string $dbJobId, Throwable $error): bool
     {
-        return $this->batchesTable->getConnection()->transactional(function () use ($batchId, $dbJobId, $error) {
+        return $this->batchesTable->getConnection()->transactional(function () use ($batchId, $dbJobId, $error): bool {
             $errorData = [
                 'message' => $error->getMessage(),
                 'file' => $error->getFile(),
@@ -240,6 +246,7 @@ class SqlBatchStorage implements BatchStorageInterface
     public function getJobResult(string $batchId, string $jobId): mixed
     {
         try {
+            /** @var \Crustum\BatchQueue\Model\Entity\BatchJob|null $job */
             $job = $this->batchJobsTable->find()
                 ->select(['result'])
                 ->where([
@@ -273,6 +280,7 @@ class SqlBatchStorage implements BatchStorageInterface
      */
     public function getFailedJobs(string $batchId): array
     {
+        /** @var list<\Crustum\BatchQueue\Model\Entity\BatchJob> $jobs */
         $jobs = $this->batchJobsTable->find()
             ->where([
                 'batch_id' => $batchId,
@@ -305,6 +313,7 @@ class SqlBatchStorage implements BatchStorageInterface
      */
     public function getBatchesByStatus(string $status, int $limit = 100, int $offset = 0): array
     {
+        /** @var list<\Crustum\BatchQueue\Model\Entity\Batch> $batches */
         $batches = $this->batchesTable->find('byStatus', status: $status)
             ->contain(['BatchJobs'])
             ->limit($limit)
@@ -312,7 +321,7 @@ class SqlBatchStorage implements BatchStorageInterface
             ->toArray();
 
         return array_map(
-            fn($batch) => $this->batchesTable->toDefinition($batch),
+            $this->batchesTable->toDefinition(...),
             $batches,
         );
     }
@@ -345,6 +354,7 @@ class SqlBatchStorage implements BatchStorageInterface
             $query->offset($offset);
         }
 
+        /** @var list<\Crustum\BatchQueue\Model\Entity\BatchJob> $jobs */
         $jobs = $query->toArray();
 
         $result = [];
@@ -366,37 +376,16 @@ class SqlBatchStorage implements BatchStorageInterface
         $query = $this->batchesTable->find()
             ->contain(['BatchJobs']);
 
-        if (isset($filters['status']) && is_string($filters['status'])) {
-            $query->where(['status' => $filters['status']]);
-        }
-
-        if (isset($filters['type']) && is_string($filters['type'])) {
-            $query->where(['type' => $filters['type']]);
-        }
-
-        if (isset($filters['created_after']) && $filters['created_after'] instanceof DateTime) {
-            $query->where(['created >=' => $filters['created_after']]);
-        }
-
-        if (isset($filters['created_before']) && $filters['created_before'] instanceof DateTime) {
-            $query->where(['created <=' => $filters['created_before']]);
-        }
+        $this->applyBatchListFilters($query, $filters);
 
         $query->limit($limit)->offset($offset);
         $query->orderBy(['created' => 'DESC']);
 
+        /** @var list<\Crustum\BatchQueue\Model\Entity\Batch> $batches */
         $batches = $query->toArray();
 
-        if (isset($filters['has_compensation']) && $filters['has_compensation'] === true) {
-            $batches = array_filter($batches, function ($batch) {
-                $definition = $this->batchesTable->toDefinition($batch);
-
-                return $definition->hasCompensation();
-            });
-        }
-
         return array_map(
-            fn($batch) => $this->batchesTable->toDefinition($batch),
+            $this->batchesTable->toDefinition(...),
             $batches,
         );
     }
@@ -407,7 +396,20 @@ class SqlBatchStorage implements BatchStorageInterface
     public function countBatches(array $filters = []): int
     {
         $query = $this->batchesTable->find();
+        $this->applyBatchListFilters($query, $filters);
 
+        return $query->count();
+    }
+
+    /**
+     * Apply shared list/count filters to a batches query.
+     *
+     * @param \Cake\ORM\Query\SelectQuery $query Batches query
+     * @param array<string, mixed> $filters Filter criteria
+     * @return void
+     */
+    protected function applyBatchListFilters(SelectQuery $query, array $filters): void
+    {
         if (isset($filters['status']) && is_string($filters['status'])) {
             $query->where(['status' => $filters['status']]);
         }
@@ -425,22 +427,48 @@ class SqlBatchStorage implements BatchStorageInterface
         }
 
         if (isset($filters['has_compensation']) && $filters['has_compensation'] === true) {
-            $subquery = $this->batchJobsTable->find()
-                ->select(['batch_id'])
-                ->where(function ($exp) {
-                    return $exp->or([
-                        $exp->like('payload', '%"compensation":%'),
-                        $exp->like('payload', '%\'compensation\':%'),
-                    ]);
-                })
-                ->groupBy(['batch_id']);
-
-            $query->where(function ($exp) use ($subquery) {
-                return $exp->in($this->batchesTable->getAlias() . '.id', $subquery);
-            });
+            $this->applyHasCompensationFilter($query);
         }
+    }
 
-        return $query->count();
+    /**
+     * Restrict to batches that have at least one job with a compensation class in payload.
+     *
+     * Uses JSON path extraction. Do not CAST json AS char on MySQL (defaults to length 30).
+     *
+     * @param \Cake\ORM\Query\SelectQuery $query Batches query
+     * @return void
+     */
+    protected function applyHasCompensationFilter(SelectQuery $query): void
+    {
+        $driver = $this->batchJobsTable->getConnection()->getDriver();
+
+        $subquery = $this->batchJobsTable->find()
+            ->select(['batch_id'])
+            ->where(function (QueryExpression $exp, SelectQuery $q) use ($driver) {
+                if ($driver instanceof Postgres) {
+                    return $exp->and([
+                        $q->expr("payload->>'compensation' IS NOT NULL"),
+                        $q->expr("payload->>'compensation' <> ''"),
+                    ]);
+                }
+
+                if ($driver instanceof Mysql) {
+                    return $q->expr("JSON_TYPE(JSON_EXTRACT(payload, '$.compensation')) = 'STRING'");
+                }
+
+                return $exp->and([
+                    $q->expr("json_extract(payload, '$.compensation') IS NOT NULL"),
+                    $q->expr("json_extract(payload, '$.compensation') <> ''"),
+                    $q->expr("json_extract(payload, '$.compensation') <> 'null'"),
+                ]);
+            })
+            ->groupBy(['batch_id']);
+
+        $alias = $this->batchesTable->getAlias();
+        $query->where(
+            fn(QueryExpression $exp): QueryExpression => $exp->in($alias . '.id', $subquery),
+        );
     }
 
     /**
@@ -550,8 +578,8 @@ class SqlBatchStorage implements BatchStorageInterface
                     $this->batchJobsTable->saveOrFail($jobEntity);
                 }
             });
-        } catch (Throwable $e) {
-            throw new RuntimeException(__('Failed to create/update job: {0}:{1}', $batchId, $jobId), 0, $e);
+        } catch (Throwable $throwable) {
+            throw new RuntimeException(__('Failed to create/update job: {0}:{1}', $batchId, $jobId), 0, $throwable);
         }
     }
 
@@ -561,6 +589,7 @@ class SqlBatchStorage implements BatchStorageInterface
     public function getJobById(string $batchId, string $jobId): ?BatchJobDefinition
     {
         try {
+            /** @var \Crustum\BatchQueue\Model\Entity\BatchJob|null $job */
             $job = $this->batchJobsTable->find()
                 ->where([
                     'batch_id' => $batchId,
@@ -573,8 +602,8 @@ class SqlBatchStorage implements BatchStorageInterface
             }
 
             return $this->batchJobsTable->toDefinition($job);
-        } catch (Throwable $e) {
-            throw new RuntimeException(__('Failed to get job by message ID: {0}:{1}', $batchId, $jobId), 0, $e);
+        } catch (Throwable $throwable) {
+            throw new RuntimeException(__('Failed to get job by message ID: {0}:{1}', $batchId, $jobId), 0, $throwable);
         }
     }
 
@@ -616,8 +645,8 @@ class SqlBatchStorage implements BatchStorageInterface
                     throw new RuntimeException(__('No job found to update for batch {0} and job {1}', $batchId, $jobId));
                 }
             });
-        } catch (Throwable $e) {
-            throw new RuntimeException(__('Failed to update job status: {0}:{1}', $batchId, $jobId), 0, $e);
+        } catch (Throwable $throwable) {
+            throw new RuntimeException(__('Failed to update job status: {0}:{1}', $batchId, $jobId), 0, $throwable);
         }
     }
 
@@ -627,6 +656,7 @@ class SqlBatchStorage implements BatchStorageInterface
     public function getJobByPosition(string $batchId, int $position): ?BatchJobDefinition
     {
         try {
+            /** @var \Crustum\BatchQueue\Model\Entity\BatchJob|null $job */
             $job = $this->batchJobsTable->find()
                 ->where([
                     'batch_id' => $batchId,
@@ -639,8 +669,8 @@ class SqlBatchStorage implements BatchStorageInterface
             }
 
             return $this->batchJobsTable->toDefinition($job);
-        } catch (Throwable $e) {
-            throw new RuntimeException(__('Failed to get job by position: {0}:{1}', $batchId, $position), 0, $e);
+        } catch (Throwable $throwable) {
+            throw new RuntimeException(__('Failed to get job by position: {0}:{1}', $batchId, $position), 0, $throwable);
         }
     }
 
@@ -658,8 +688,8 @@ class SqlBatchStorage implements BatchStorageInterface
                     'position' => $position,
                 ]);
             });
-        } catch (Throwable $e) {
-            throw new RuntimeException(__('Failed to update job message ID: {0}:{1}', $batchId, $position), 0, $e);
+        } catch (Throwable $throwable) {
+            throw new RuntimeException(__('Failed to update job message ID: {0}:{1}', $batchId, $position), 0, $throwable);
         }
     }
 
@@ -669,7 +699,7 @@ class SqlBatchStorage implements BatchStorageInterface
     public function addJobsToBatch(string $batchId, array $jobs): int
     {
         try {
-            return $this->batchesTable->getConnection()->transactional(function () use ($batchId, $jobs) {
+            return $this->batchesTable->getConnection()->transactional(function () use ($batchId, $jobs): int {
                 $batch = $this->batchesTable->get($batchId);
 
                 if (!$batch) {
@@ -691,7 +721,7 @@ class SqlBatchStorage implements BatchStorageInterface
                         'job_id' => $jobId,
                         'position' => $position,
                         'status' => 'pending',
-                        'payload' => json_encode($jobData),
+                        'payload' => $jobData,
                     ]);
                 }
 
@@ -705,8 +735,8 @@ class SqlBatchStorage implements BatchStorageInterface
 
                 return count($jobs);
             });
-        } catch (Throwable $e) {
-            throw new RuntimeException(__('Failed to add jobs to batch: {0}', $batchId), 0, $e);
+        } catch (Throwable $throwable) {
+            throw new RuntimeException(__('Failed to add jobs to batch: {0}', $batchId), 0, $throwable);
         }
     }
 }

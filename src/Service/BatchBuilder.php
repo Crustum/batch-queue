@@ -3,10 +3,12 @@ declare(strict_types=1);
 
 namespace Crustum\BatchQueue\Service;
 
+use BackedEnum;
 use Cake\Utility\Text;
 use Crustum\BatchQueue\Data\BatchDefinition;
 use Crustum\BatchQueue\Storage\BatchStorageInterface;
 use InvalidArgumentException;
+use UnitEnum;
 
 /**
  * Unified Batch Builder - Single interface for batches and compensation patterns
@@ -20,12 +22,19 @@ use InvalidArgumentException;
 final class BatchBuilder
 {
     private BatchStorageInterface $storage;
+
     private ?string $queueConfig;
+
     private ?string $queueName;
+
     private string $type;
+
     private array $jobs;
+
     private string $batchId;
+
     private array $context = [];
+
     private array $options = [];
 
     /**
@@ -103,6 +112,7 @@ final class BatchBuilder
         if (is_callable($callback) && !is_string($callback)) {
             throw new InvalidArgumentException('Closures cannot be used as callbacks in queue systems. Use class names or job definitions.');
         }
+
         $this->options['on_complete'] = $callback;
 
         return $this;
@@ -120,7 +130,49 @@ final class BatchBuilder
         if (is_callable($callback) && !is_string($callback)) {
             throw new InvalidArgumentException('Closures cannot be used as callbacks in queue systems. Use class names or job definitions.');
         }
+
         $this->options['on_failure'] = $callback;
+
+        return $this;
+    }
+
+    /**
+     * Allow parallel batch jobs to fail without failing the batch immediately
+     *
+     * When true, the batch settles when completed + failed reaches total jobs.
+     * Not supported for sequential chains or jobs with compensation.
+     *
+     * @param bool $allow Whether to allow individual job failures
+     * @return static
+     * @throws \InvalidArgumentException
+     */
+    public function allowFailures(bool $allow = true): static
+    {
+        if ($allow) {
+            $this->assertAllowFailuresCompatible();
+        }
+
+        $this->options['allow_failures'] = $allow;
+
+        return $this;
+    }
+
+    /**
+     * Set per-job failure callback for parallel batches (job class only)
+     *
+     * Invoked once for each failed job. Typically used with allowFailures(true).
+     *
+     * @param array|string $callback Callback definition
+     * @return static
+     * @throws \InvalidArgumentException
+     */
+    public function onJobFailure(string|array $callback): static
+    {
+        if (is_callable($callback) && !is_string($callback)) {
+            throw new InvalidArgumentException('Closures cannot be used as callbacks in queue systems. Use class names or job definitions.');
+        }
+
+        $this->options['on_job_failure'] = $callback;
 
         return $this;
     }
@@ -154,14 +206,44 @@ final class BatchBuilder
     }
 
     /**
-     * Set queue name for named queue routing
+     * Prepend one or more jobs to the pending batch/chain before dispatch
      *
-     * @param string $queueName Queue name identifier
+     * Accepts a class string, a single job definition (`['class' => ...]` or
+     * compensation pair wrapped as `[[Job::class, Undo::class]]`), or a list of
+     * job definitions (same shapes as `batch()` / `chain()`).
+     *
+     * @param array|string $jobs Job definition(s)
      * @return static
      */
-    public function queue(string $queueName): static
+    public function prepend(array|string $jobs): static
     {
-        $this->queueName = $queueName;
+        $this->jobs = [...$this->normalizeMutableJobs($jobs), ...$this->jobs];
+
+        return $this;
+    }
+
+    /**
+     * Append one or more jobs to the pending batch/chain before dispatch
+     *
+     * @param array|string $jobs Job definition(s)
+     * @return static
+     */
+    public function append(array|string $jobs): static
+    {
+        $this->jobs = [...$this->jobs, ...$this->normalizeMutableJobs($jobs)];
+
+        return $this;
+    }
+
+    /**
+     * Set queue name for named queue routing
+     *
+     * @param \BackedEnum|\UnitEnum|string $queueName Queue name identifier
+     * @return static
+     */
+    public function queue(BackedEnum|UnitEnum|string $queueName): static
+    {
+        $this->queueName = $this->enumToString($queueName);
 
         return $this;
     }
@@ -169,12 +251,12 @@ final class BatchBuilder
     /**
      * Set queue configuration name
      *
-     * @param string $queueConfig Queue configuration name
+     * @param \BackedEnum|\UnitEnum|string|null $queueConfig Queue configuration name
      * @return static
      */
-    public function queueConfig(?string $queueConfig): static
+    public function queueConfig(BackedEnum|UnitEnum|string|null $queueConfig): static
     {
-        $this->queueConfig = $queueConfig;
+        $this->queueConfig = $queueConfig === null ? null : $this->enumToString($queueConfig);
 
         return $this;
     }
@@ -187,14 +269,19 @@ final class BatchBuilder
      */
     public function dispatch(): string
     {
-        if (empty($this->jobs)) {
+        if ($this->jobs === []) {
             throw new InvalidArgumentException('Cannot dispatch empty batch');
+        }
+
+        if (($this->options['allow_failures'] ?? false) === true) {
+            $this->assertAllowFailuresCompatible();
         }
 
         $resolvedQueueConfig = $this->queueConfig;
         if ($resolvedQueueConfig === null && $this->queueName !== null) {
             $resolvedQueueConfig = QueueConfigService::getQueueConfigForNamedQueue($this->queueName);
         }
+
         if ($resolvedQueueConfig === null) {
             $resolvedQueueConfig = QueueConfigService::getQueueConfig($this->type);
         }
@@ -227,6 +314,16 @@ final class BatchBuilder
     }
 
     /**
+     * Get pending job definitions (before dispatch)
+     *
+     * @return array
+     */
+    public function getJobs(): array
+    {
+        return $this->jobs;
+    }
+
+    /**
      * Get batch context
      *
      * @return array Context data
@@ -244,5 +341,94 @@ final class BatchBuilder
     public function getOptions(): array
     {
         return $this->options;
+    }
+
+    /**
+     * Normalize prepend/append input into a list of job definitions
+     *
+     * @param array|string $jobs Job definition(s)
+     * @return array
+     */
+    private function normalizeMutableJobs(array|string $jobs): array
+    {
+        if (is_string($jobs)) {
+            return [$jobs];
+        }
+
+        if (isset($jobs['class'])) {
+            return [$jobs];
+        }
+
+        return BatchDefinition::filterFalsyJobs($jobs);
+    }
+
+    /**
+     * Guard allowFailures against sequential chains and compensation pairs
+     *
+     * @return void
+     * @throws \InvalidArgumentException
+     */
+    private function assertAllowFailuresCompatible(): void
+    {
+        if ($this->type === BatchDefinition::TYPE_SEQUENTIAL) {
+            throw new InvalidArgumentException(
+                'allowFailures is not supported for sequential chains. Use parallel batches instead.',
+            );
+        }
+
+        if ($this->jobsIncludeCompensation()) {
+            throw new InvalidArgumentException(
+                'allowFailures cannot be combined with compensation jobs.',
+            );
+        }
+    }
+
+    /**
+     * Detect compensation pairs in pending (pre-normalize) job definitions
+     *
+     * @return bool
+     */
+    private function jobsIncludeCompensation(): bool
+    {
+        foreach ($this->jobs as $job) {
+            if (!is_array($job)) {
+                continue;
+            }
+
+            if (isset($job['compensation'])) {
+                return true;
+            }
+
+            if (
+                !isset($job['class'])
+                && count($job) === 2
+                && isset($job[0], $job[1])
+                && is_string($job[0])
+                && is_string($job[1])
+            ) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Resolve an enum or string to a string value
+     *
+     * @param \UnitEnum|string $value Enum or string value
+     * @return string
+     */
+    private function enumToString(UnitEnum|string $value): string
+    {
+        if ($value instanceof BackedEnum) {
+            return (string)$value->value;
+        }
+
+        if ($value instanceof UnitEnum) {
+            return $value->name;
+        }
+
+        return $value;
     }
 }

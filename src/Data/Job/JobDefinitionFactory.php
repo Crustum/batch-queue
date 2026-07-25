@@ -63,6 +63,7 @@ class JobDefinitionFactory
                 if (!is_array($decoded)) {
                     throw new InvalidArgumentException('Invalid payload format in BatchJob entity');
                 }
+
                 $payload = $decoded;
             }
 

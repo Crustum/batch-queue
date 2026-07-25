@@ -7,6 +7,7 @@ use Cake\Log\Log;
 use Cake\Queue\Job\JobInterface;
 use Cake\Queue\Job\Message;
 use Cake\Queue\Queue\Processor;
+use Crustum\BatchQueue\Data\BatchDefinition;
 use Crustum\BatchQueue\ResultAwareInterface;
 use Crustum\BatchQueue\Storage\BatchStorageInterface;
 
@@ -61,13 +62,14 @@ class CompensationCompleteCallbackJob implements JobInterface, ResultAwareInterf
 
         $batch = $this->storage->getBatch($originalBatchId);
 
-        if ($batch) {
+        if ($batch instanceof BatchDefinition) {
             $context = $batch->context ?? [];
             $context['compensation_status'] = 'completed';
             $context['compensation_completed_at'] = date('Y-m-d H:i:s');
 
             $this->storage->updateBatch($originalBatchId, ['context' => $context]);
         }
+
         Log::info('**CompensationCompleteCallbackJob** execute: originalBatchId=' . $originalBatchId . ' batch=' . json_encode($batch));
 
         $this->result = ['compensation_complete' => true];

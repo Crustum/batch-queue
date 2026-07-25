@@ -55,6 +55,7 @@ class BatchesTable extends Table
             'className' => 'Crustum/BatchQueue.BatchJobs',
             'dependent' => true,
             'cascadeCallbacks' => true,
+            'strategy' => 'select',
         ]);
     }
 
@@ -194,8 +195,9 @@ class BatchesTable extends Table
 
                 return $jobData;
             }, $batch->batch_jobs);
-            usort($jobs, fn($a, $b) => ($a['position'] ?? 0) <=> ($b['position'] ?? 0));
+            usort($jobs, fn(array $a, array $b): int => ($a['position'] ?? 0) <=> ($b['position'] ?? 0));
         }
+
         $batchData = $batch->toArray();
         $batchData['jobs'] = $jobs;
 

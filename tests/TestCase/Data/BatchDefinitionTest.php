@@ -153,7 +153,7 @@ class BatchDefinitionTest extends TestCase
         $this->assertEquals(BatchDefinition::TYPE_PARALLEL, $array['type']);
         // Verify jobs structure (format changed after refactoring)
         $this->assertCount(1, $array['jobs']);
-        $this->assertEquals('Crustum\BatchQueue\Test\Support\TestJob', $array['jobs'][0]['class']);
+        $this->assertEquals(TestJob::class, $array['jobs'][0]['class']);
         $this->assertEquals(['test' => 'data'], $array['context']);
         $this->assertEquals(['timeout' => 3600], $array['options']);
         $this->assertEquals('2024-01-01 12:00:00', $array['created']);
@@ -181,5 +181,58 @@ class BatchDefinitionTest extends TestCase
         $decoded = json_decode($json, true);
         $this->assertEquals('json-test', $decoded['id']);
         $this->assertEquals(BatchDefinition::TYPE_PARALLEL, $decoded['type']);
+    }
+
+    /**
+     * Null/false job slots are ignored during normalize
+     *
+     * @return void
+     */
+    public function testFilterFalsyJobsOnConstruct(): void
+    {
+        $batch = new BatchDefinition(
+            'falsy-test',
+            BatchDefinition::TYPE_PARALLEL,
+            [null, TestJob::class, false, TestJob::class],
+        );
+
+        $this->assertSame(2, $batch->totalJobs);
+        $this->assertCount(2, $batch->jobs);
+    }
+
+    /**
+     * filterFalsyJobs helper reindexes remaining entries
+     *
+     * @return void
+     */
+    public function testFilterFalsyJobsHelper(): void
+    {
+        $filtered = BatchDefinition::filterFalsyJobs([null, 'a', false, 'b', '']);
+
+        $this->assertSame(['a', 'b', ''], $filtered);
+    }
+
+    /**
+     * @return void
+     */
+    public function testAllowsFailuresAndSettledHelpers(): void
+    {
+        $batch = new BatchDefinition(
+            'settle-1',
+            BatchDefinition::TYPE_PARALLEL,
+            [TestJob::class, TestJob::class, TestJob::class],
+            options: ['allow_failures' => true],
+        );
+
+        $this->assertTrue($batch->allowsFailures());
+        $this->assertFalse($batch->isSettled());
+        $this->assertFalse($batch->isTerminal());
+
+        $batch->completedJobs = 2;
+        $batch->failedJobs = 1;
+        $this->assertTrue($batch->isSettled());
+
+        $batch->markCompleted();
+        $this->assertTrue($batch->isTerminal());
     }
 }

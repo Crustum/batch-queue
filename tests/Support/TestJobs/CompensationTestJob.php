@@ -5,6 +5,7 @@ namespace Crustum\BatchQueue\Test\Support\TestJobs;
 
 use Cake\Queue\Job\JobInterface;
 use Cake\Queue\Job\Message;
+use Crustum\BatchQueue\Data\BatchDefinition;
 use Crustum\BatchQueue\Storage\SqlBatchStorage;
 
 /**
@@ -15,6 +16,7 @@ use Crustum\BatchQueue\Storage\SqlBatchStorage;
 class CompensationTestJob implements JobInterface
 {
     public static array $executedJobs = [];
+
     public static array $compensatedJobs = [];
 
     public function execute(Message $message): ?string
@@ -38,9 +40,9 @@ class CompensationTestJob implements JobInterface
             if ($originalBatchId) {
                 $storage = new SqlBatchStorage();
                 $originalBatch = $storage->getBatch($originalBatchId);
-                if ($originalBatch) {
+                if ($originalBatch instanceof BatchDefinition) {
                     $context = $originalBatch->context ?? [];
-                    $context['compensations'] = $context['compensations'] ?? [];
+                    $context['compensations'] ??= [];
                     $context['compensations'][] = [
                         'action' => $action,
                         'original_class' => $compensationData['original_job_class'] ?? null,

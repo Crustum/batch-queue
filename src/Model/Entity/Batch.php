@@ -81,17 +81,17 @@ class Batch extends Entity
     }
 
     /**
-     * Get completion percentage
+     * Get completion percentage (0–100)
      *
-     * @return float
+     * @return int
      */
-    public function getProgressPercentage(): float
+    public function getProgressPercentage(): int
     {
         if ($this->total_jobs === 0) {
-            return 0.0;
+            return 0;
         }
 
-        return $this->completed_jobs / $this->total_jobs * 100.0;
+        return (int)round($this->completed_jobs / $this->total_jobs * 100);
     }
 
     /**

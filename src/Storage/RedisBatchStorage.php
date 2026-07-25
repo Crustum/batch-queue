@@ -19,7 +19,9 @@ use Throwable;
 class RedisBatchStorage implements BatchStorageInterface
 {
     protected Redis $redis;
+
     protected string $prefix;
+
     protected int $ttl;
 
     /**
@@ -136,9 +138,7 @@ class RedisBatchStorage implements BatchStorageInterface
             $updates['modified'] = time();
         }
 
-        if (!empty($updates)) {
-            $this->redis->hMSet($batchKey, $updates);
-        }
+        $this->redis->hMSet($batchKey, $updates);
     }
 
     /**
@@ -419,7 +419,7 @@ LUA;
         $resultsKey = $this->getResultsKey($batchId);
         $results = $this->redis->hGetAll($resultsKey);
 
-        return array_map(fn($result) => json_decode($result, true), $results);
+        return array_map(fn($result): mixed => json_decode((string)$result, true), $results);
     }
 
     /**
@@ -455,7 +455,7 @@ LUA;
 
         foreach ($errors as $jobId => $errorJson) {
             $jobDefinition = $this->getJobById($batchId, $jobId);
-            if ($jobDefinition) {
+            if ($jobDefinition instanceof BatchJobDefinition) {
                 $failedJobs[$jobDefinition->jobId] = $jobDefinition;
             }
         }
@@ -570,7 +570,7 @@ LUA;
         if ($orderBy === 'position') {
             ksort($jobs);
         } elseif ($orderBy === 'created') {
-            uasort($jobs, function ($a, $b) {
+            uasort($jobs, function ($a, $b): int {
                 $aTime = $a->created?->getTimestamp() ?? 0;
                 $bTime = $b->created?->getTimestamp() ?? 0;
 
@@ -598,7 +598,15 @@ LUA;
 
         while (($keys = $this->redis->scan($iterator, $pattern, 100)) !== false) {
             foreach ($keys as $key) {
-                if (strpos($key, ':jobs:') !== false || strpos($key, ':results:') !== false || strpos($key, ':failed:') !== false) {
+                if (str_contains($key, ':jobs:')) {
+                    continue;
+                }
+
+                if (str_contains($key, ':results:')) {
+                    continue;
+                }
+
+                if (str_contains($key, ':failed:')) {
                     continue;
                 }
 
@@ -633,14 +641,12 @@ LUA;
                 }
 
                 $batch = $this->getBatch($batchId);
-                if (!$batch) {
+                if (!$batch instanceof BatchDefinition) {
                     continue;
                 }
 
-                if (isset($filters['has_compensation']) && $filters['has_compensation'] === true) {
-                    if (!$batch->hasCompensation()) {
-                        continue;
-                    }
+                if (isset($filters['has_compensation']) && $filters['has_compensation'] === true && !$batch->hasCompensation()) {
+                    continue;
                 }
 
                 $batches[] = $batch;
@@ -651,7 +657,7 @@ LUA;
             }
         }
 
-        usort($batches, function ($a, $b) {
+        usort($batches, function ($a, $b): int {
             $aTime = $a->created?->getTimestamp() ?? 0;
             $bTime = $b->created?->getTimestamp() ?? 0;
 
@@ -672,7 +678,15 @@ LUA;
 
         while (($keys = $this->redis->scan($iterator, $pattern, 100)) !== false) {
             foreach ($keys as $key) {
-                if (strpos($key, ':jobs:') !== false || strpos($key, ':results:') !== false || strpos($key, ':failed:') !== false) {
+                if (str_contains($key, ':jobs:')) {
+                    continue;
+                }
+
+                if (str_contains($key, ':results:')) {
+                    continue;
+                }
+
+                if (str_contains($key, ':failed:')) {
                     continue;
                 }
 
@@ -708,7 +722,11 @@ LUA;
 
                 if (isset($filters['has_compensation']) && $filters['has_compensation'] === true) {
                     $batch = $this->getBatch($batchId);
-                    if (!$batch || !$batch->hasCompensation()) {
+                    if (!$batch instanceof BatchDefinition) {
+                        continue;
+                    }
+
+                    if (!$batch->hasCompensation()) {
                         continue;
                     }
                 }
@@ -732,7 +750,15 @@ LUA;
 
         while (($keys = $this->redis->scan($iterator, $pattern, 100)) !== false) {
             foreach ($keys as $key) {
-                if (strpos($key, ':jobs:') !== false || strpos($key, ':results:') !== false || strpos($key, ':failed:') !== false) {
+                if (str_contains($key, ':jobs:')) {
+                    continue;
+                }
+
+                if (str_contains($key, ':results:')) {
+                    continue;
+                }
+
+                if (str_contains($key, ':failed:')) {
                     continue;
                 }
 
@@ -912,6 +938,7 @@ LUA;
                 $decoded = json_decode($resultJson, true);
                 $result = $decoded !== false ? $decoded : $resultJson;
             }
+
             $completedAt = null;
             if (isset($data['completed_at'])) {
                 $completedAt = DateTime::createFromTimestamp((int)$data['completed_at']);
@@ -923,6 +950,7 @@ LUA;
                 $decoded = json_decode($errorJson, true);
                 $error = is_array($decoded) ? $decoded : ['message' => $errorJson];
             }
+
             $completedAt = null;
             if (isset($data['completed_at'])) {
                 $completedAt = DateTime::createFromTimestamp((int)$data['completed_at']);
@@ -1037,6 +1065,7 @@ LUA;
                 if ($oldJobId !== $jobId) {
                     $this->redis->hDel($jobsKey, $oldJobId);
                 }
+
                 $this->redis->hSet($jobsKey, $jobId, $updatedJson);
                 break;
             }

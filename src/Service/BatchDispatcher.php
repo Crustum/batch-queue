@@ -3,8 +3,10 @@ declare(strict_types=1);
 
 namespace Crustum\BatchQueue\Service;
 
+use Cake\Event\EventManager;
 use Cake\Queue\QueueManager;
 use Crustum\BatchQueue\Data\BatchDefinition;
+use Crustum\BatchQueue\Event\BatchStarted;
 use Crustum\BatchQueue\Storage\BatchStorageInterface;
 use RuntimeException;
 
@@ -28,11 +30,11 @@ final class BatchDispatcher
     {
         $batch = $storage->getBatch($batchId);
 
-        if (!$batch) {
+        if (!$batch instanceof BatchDefinition) {
             throw new RuntimeException("Batch not found: {$batchId}");
         }
 
-        static::dispatch($batch);
+        self::dispatch($batch);
     }
 
     /**
@@ -45,10 +47,12 @@ final class BatchDispatcher
     public static function dispatch(BatchDefinition $batch): void
     {
         if ($batch->type === BatchDefinition::TYPE_PARALLEL) {
-            static::queueParallelJobs($batch);
+            self::queueParallelJobs($batch);
         } else {
-            static::queueFirstChainJob($batch);
+            self::queueFirstChainJob($batch);
         }
+
+        EventManager::instance()->dispatch(new BatchStarted($batch));
     }
 
     /**
@@ -60,7 +64,7 @@ final class BatchDispatcher
     protected static function queueParallelJobs(BatchDefinition $batch): void
     {
         foreach ($batch->jobs as $job) {
-            static::queueInnerJob($batch, $job);
+            self::queueInnerJob($batch, $job);
         }
     }
 
@@ -81,7 +85,7 @@ final class BatchDispatcher
         }
 
         if ($firstJob) {
-            static::queueChainJob($batch, $firstJob);
+            self::queueChainJob($batch, $firstJob);
         }
     }
 
@@ -101,7 +105,7 @@ final class BatchDispatcher
         $jobContext['compensation'] = $job['compensation'] ?? null;
 
         $queueConfig = $batch->queueConfig ?? QueueConfigService::getQueueConfig('sequential');
-        static::queueJob($job['class'], $jobContext, $queueConfig);
+        self::queueJob($job['class'], $jobContext, $queueConfig);
     }
 
     /**
@@ -123,7 +127,20 @@ final class BatchDispatcher
         $jobContext['compensation'] = $job['compensation'] ?? null;
 
         $queueConfig = $batch->queueConfig ?? QueueConfigService::getQueueConfig('parallel');
-        static::queueJob($job['class'], $jobContext, $queueConfig);
+        self::queueJob($job['class'], $jobContext, $queueConfig);
+    }
+
+    /**
+     * Queue a standalone job (no batch tracking) with Monitor-aware dispatch
+     *
+     * @param string $jobClass Job class to queue
+     * @param array $args Job arguments
+     * @param string $queue Queue configuration name
+     * @return void
+     */
+    public static function queueStandaloneJob(string $jobClass, array $args, string $queue = 'default'): void
+    {
+        self::queueJob($jobClass, $args, $queue);
     }
 
     /**

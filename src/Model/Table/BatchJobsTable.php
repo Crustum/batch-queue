@@ -44,6 +44,10 @@ class BatchJobsTable extends Table
         $this->setDisplayField('job_id');
         $this->setPrimaryKey('id');
 
+        $this->getSchema()->setColumnType('payload', 'json');
+        $this->getSchema()->setColumnType('result', 'json');
+        $this->getSchema()->setColumnType('error', 'json');
+
         $this->addBehavior('Timestamp');
 
         $this->belongsTo('Batches', [
@@ -135,9 +139,10 @@ class BatchJobsTable extends Table
                 'job_id' => $jobId,
                 'position' => $position,
                 'status' => 'pending',
-                'payload' => json_encode($jobData),
+                'payload' => $jobData,
             ]);
         }
+
         $this->saveManyOrFail($entities);
     }
 
@@ -229,6 +234,7 @@ class BatchJobsTable extends Table
      */
     public function getBatchResults(string $batchId): array
     {
+        /** @var list<\Crustum\BatchQueue\Model\Entity\BatchJob> $jobs */
         $jobs = $this->find()
             ->select(['job_id', 'result'])
             ->where([
@@ -253,6 +259,7 @@ class BatchJobsTable extends Table
      */
     public function getFailedJobs(string $batchId): array
     {
+        /** @var list<\Crustum\BatchQueue\Model\Entity\BatchJob> $jobs */
         $jobs = $this->find()
             ->select(['job_id', 'payload', 'error'])
             ->where([
@@ -321,7 +328,7 @@ class BatchJobsTable extends Table
             'job_id' => $jobDefinition->jobId,
             'position' => $jobDefinition->position,
             'status' => $jobDefinition->status,
-            'payload' => json_encode($jobDefinition->payload),
+            'payload' => $jobDefinition->payload,
             'result' => $jobDefinition->result,
             'error' => $jobDefinition->error,
             'completed_at' => $jobDefinition->completedAt,

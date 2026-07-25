@@ -7,10 +7,13 @@
 - [Quickstart](#quickstart)
 - [Parallel Batches](#parallel-batches)
 - [Sequential Chains](#sequential-chains)
+- [Untracked Bulk Fan-out](#untracked-bulk-fan-out)
 - [Dynamic Job Addition](#dynamic-job-addition)
+- [Building Job Lists](#building-job-lists)
 - [Compensation Patterns](#compensation-patterns)
 - [Context Management](#context-management)
 - [Batch Options](#batch-options)
+- [Lifecycle Events](#lifecycle-events)
 - [Named Queues](#named-queues)
 - [Progress Tracking](#progress-tracking)
 - [Storage Backends](#storage-backends)
@@ -25,7 +28,9 @@ The primary use case for parallel batches is the map-reduce pattern: running the
 
 BatchQueue integrates seamlessly with the CakePHP Queue plugin and works perfectly with monitoring tools like the Monitor plugin. All batch jobs are pushed to the default queue as regular jobs, ensuring full compatibility with existing queue infrastructure.
 
-Key features include job-specific arguments for parallel batches, automatic context accumulation in sequential chains, compensation job execution on failures, batch progress tracking, and flexible storage backends (SQL or Redis). The plugin handles job execution, failure tracking, and batch completion automatically.
+Key features include parallel batches and sequential chains with a shared `BatchManager` / `BatchBuilder` API, job-specific arguments, context accumulation, and compensation (saga) pairs on sequential jobs. You can expand running batches with `addJobs()`, enqueue untracked work with `bulk()`, build conditional job lists (`null` / `false` slots are ignored), and adjust pending lists with `prepend()` / `append()` before dispatch. Parallel batches support strict fail-fast accounting or `allowFailures()` settle-when-done mode. Lifecycle Cake events fire when a batch starts, finishes, or is cancelled. Progress is tracked as an integer 0–100%, with SQL or Redis storage and queue routing via string or enum names.
+
+The plugin handles job execution, failure tracking, and batch completion automatically.
 
 <a name="installation"></a>
 ## Installation
@@ -150,6 +155,19 @@ $batchId = $batchManager->chain([
     ->setContext(['order_id' => 123])
     ->dispatch();
 ```
+
+### Untracked Bulk Enqueue
+
+Enqueue many jobs without batch tracking:
+
+```php
+$batchManager->bulk([
+    ['class' => ImportRowJob::class, 'args' => ['row_id' => 1]],
+    ['class' => ImportRowJob::class, 'args' => ['row_id' => 2]],
+]);
+```
+
+See [Untracked Bulk Fan-out](#untracked-bulk-fan-out) for details.
 
 Each job in a sequential chain automatically receives the accumulated context from previous jobs. Jobs that implement `ContextAwareInterface` can update the context, and subsequent jobs receive the updated context automatically.
 
@@ -394,6 +412,55 @@ class ChargePaymentJob implements JobInterface, ContextAwareInterface, ResultAwa
 The context is automatically persisted and passed to the next job in the chain. This allows sequential jobs to build upon previous results.
 
 The result is automatically stored individually for each job implementing `ResultAwareInterface` when the job completes successfully.
+
+<a name="untracked-bulk-fan-out"></a>
+## Untracked Bulk Fan-out
+
+Use `bulk()` when you need to enqueue many independent jobs quickly **without** creating a batch record, progress tracking, compensation, or completion/failure callbacks.
+
+```php
+$count = $batchManager->bulk([
+    ['class' => ImportRowJob::class, 'args' => ['row_id' => 1]],
+    ['class' => ImportRowJob::class, 'args' => ['row_id' => 2]],
+    ImportCleanupJob::class,
+], 'batchjob');
+```
+
+The method returns the number of jobs enqueued. Entries that are `null` or `false` are skipped. The optional second argument sets the queue config; when omitted it uses the manager config or the parallel default. Compensation pairs are not supported in `bulk()` — use `chain()` for sagas. Prefer `batch()` or `chain()` when you need status, progress, callbacks, or compensation.
+
+<a name="building-job-lists"></a>
+## Building Job Lists
+
+### Conditional Slots
+
+`batch()`, `chain()`, and `addJobs()` ignore `null` and `false` entries so you can build lists conditionally:
+
+```php
+$batchId = $batchManager->batch([
+    ProcessOrderJob::class,
+    $shouldNotify ? SendNotificationJob::class : null,
+    $shouldAudit ? AuditJob::class : false,
+])
+->dispatch();
+```
+
+Empty lists after filtering cannot be dispatched.
+
+### Prepend and Append Before Dispatch
+
+Mutate the pending builder job list before `dispatch()`:
+
+```php
+$batchId = $batchManager->chain([ChargePaymentJob::class])
+    ->prepend(ValidateOrderJob::class)
+    ->append([
+        SendConfirmationJob::class,
+        ['class' => LogAuditJob::class, 'args' => ['source' => 'checkout']],
+    ])
+    ->dispatch();
+```
+
+`prepend()` and `append()` accept a class string, a single `['class' => ...]` definition, or a list of definitions using the same shapes as `batch()` / `chain()`. For a compensation pair as one step, wrap it: `->append([[StepJob::class, UndoJob::class]])`. After the batch is running, use `addJobs()` instead (see Dynamic Job Addition).
 
 <a name="dynamic-job-addition"></a>
 ## Dynamic Job Addition
@@ -706,6 +773,7 @@ class SimpleJob implements JobInterface
 However, these jobs cannot update the context for subsequent jobs in the chain. Only jobs implementing `ContextAwareInterface` can modify and accumulate context.
 
 <a name="batch-options"></a>
+## Batch Options
 
 ### Completion Callback
 
@@ -765,6 +833,91 @@ class BatchFailureJob implements JobInterface
     }
 }
 ```
+
+Callbacks must be job class names or job definition arrays. Closures are not supported because callback jobs are queued.
+
+### Parallel Failure Modes
+
+By default, parallel batches use **strict** failure accounting: the first failed job marks the batch `failed`, fires `onFailure` once, and does **not** run `onComplete` or dispatch `BatchFinished`. Remaining queue messages may still execute (the broker is not purged in v1); their job rows and counters are still updated for observability.
+
+Use `allowFailures()` when you want the batch to wait until every job has succeeded or failed, then settle:
+
+```php
+$batchId = $batchManager->batch([
+    ['class' => ProcessItemJob::class, 'args' => ['id' => 1]],
+    ['class' => ProcessItemJob::class, 'args' => ['id' => 2]],
+    ['class' => ProcessItemJob::class, 'args' => ['id' => 3]],
+])
+->allowFailures()
+->onJobFailure([
+    'class' => PerJobFailureJob::class,
+])
+->onComplete([
+    'class' => BatchSettledJob::class,
+])
+->onFailure([
+    'class' => BatchHadFailuresJob::class,
+])
+->dispatch();
+```
+
+Under `allowFailures()`:
+
+| When | What runs |
+|---|---|
+| Each job failure | Optional `onJobFailure` callback (once per failed job) |
+| `completed + failed >= total` | Batch status set to `completed`; `BatchFinished` fires; `onComplete` runs if set |
+| Settled with `failed_jobs > 0` | Batch `onFailure` runs once (in addition to `onComplete`) |
+| Settled with `failed_jobs === 0` | `onComplete` only |
+
+Inspect `failed_jobs` on the batch (or in callback args) to branch on partial failure. Status stays `completed` after settle so progress UIs treat the batch as finished; use the counter as the failure signal.
+
+`allowFailures()` is parallel-only. Calling it on a sequential chain, or combining it with compensation pairs, throws `InvalidArgumentException`.
+
+### Retry and Timeout
+
+```php
+$batchId = $batchManager->batch([Job1::class, Job2::class])
+    ->retry(3, 60)
+    ->timeout(3600)
+    ->name('nightly-import')
+    ->dispatch();
+```
+
+<a name="lifecycle-events"></a>
+## Lifecycle Events
+
+BatchQueue dispatches CakePHP events for batch lifecycle observers (metrics, logging, audit).
+
+| Event name | Class | When |
+|---|---|---|
+| `BatchQueue.BatchStarted` | `Crustum\BatchQueue\Event\BatchStarted` | After jobs are first queued for a new batch |
+| `BatchQueue.BatchFinished` | `Crustum\BatchQueue\Event\BatchFinished` | When the batch reaches a terminal finished state (`completed`, including `allowFailures` settle) |
+| `BatchQueue.BatchCanceled` | `Crustum\BatchQueue\Event\BatchCanceled` | When `cancelBatch()` runs (before storage delete) |
+
+```php
+use Cake\Event\EventManager;
+use Crustum\BatchQueue\Event\BatchFinished;
+use Crustum\BatchQueue\Event\BatchCanceled;
+
+EventManager::instance()->on(BatchFinished::NAME, function (BatchFinished $event): void {
+    $batch = $event->getBatch();
+    // ...
+});
+
+EventManager::instance()->on(BatchCanceled::NAME, function (BatchCanceled $event): void {
+    $batch = $event->getBatch();
+    $reason = $event->getException();
+});
+```
+
+Cancel with an optional reason:
+
+```php
+$batchManager->cancelBatch($batchId, new RuntimeException('Cancelled by operator'));
+```
+
+Empty or whitespace-only batch ids are rejected on lookup, cancel, and `addJobs()`.
 
 <a name="named-queues"></a>
 ## Named Queues
@@ -879,6 +1032,32 @@ $batchManager->chain([...])
 
 This directly uses the `email-chain` queue configuration without going through named queue resolution.
 
+### Enum Queue Names
+
+`queue()` and `queueConfig()` accept strings or PHP enums:
+
+```php
+enum AppQueue: string
+{
+    case Payments = 'payment-processing';
+}
+
+enum AppQueueConfig
+{
+    case EmailChain;
+}
+
+$batchManager->chain([...])
+    ->queue(AppQueue::Payments)
+    ->dispatch();
+
+$batchManager->chain([...])
+    ->queueConfig(AppQueueConfig::EmailChain)
+    ->dispatch();
+```
+
+Backed enums use `->value`; unit enums use `->name`.
+
 <a name="progress-tracking"></a>
 ## Progress Tracking
 
@@ -900,7 +1079,7 @@ echo "Type: {$batch->type}\n";
 
 ### Getting Progress Information
 
-Get formatted progress data:
+Get formatted progress data. `progress_percentage` is an integer from 0 to 100:
 
 ```php
 $progress = $batchManager->getProgress($batchId);
@@ -908,6 +1087,13 @@ $progress = $batchManager->getProgress($batchId);
 echo "Progress: {$progress['progress_percentage']}%\n";
 echo "Completed: {$progress['completed_jobs']}/{$progress['total_jobs']}\n";
 echo "Status: {$progress['status']}\n";
+```
+
+Entity helper:
+
+```php
+$batchEntity = /* Batch entity from table */;
+$percent = $batchEntity->getProgressPercentage(); // int 0–100
 ```
 
 

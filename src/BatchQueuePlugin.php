@@ -29,16 +29,16 @@ class BatchQueuePlugin extends BasePlugin
     {
         $config = Configure::read('BatchQueue', []);
 
-        $container->add(BatchStorageInterface::class, function () use ($config) {
+        $container->add(BatchStorageInterface::class, function () use ($config): RedisBatchStorage|SqlBatchStorage {
             $storageType = $config['storage'] ?? 'sql';
 
             if ($storageType === 'redis') {
                 $redisConfig = $config['redis'] ?? [];
 
                 return new RedisBatchStorage($redisConfig);
-            } else {
-                return new SqlBatchStorage();
             }
+
+            return new SqlBatchStorage();
         });
 
         $container->add(BatchManager::class)

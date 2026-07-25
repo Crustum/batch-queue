@@ -48,6 +48,9 @@ clover.xml
 # Psalm
 # psalm-baseline.xml
 
+# PHPUnit
+/phpunit.xml
+
 # Composer
 composer.lock
 /composer.phar

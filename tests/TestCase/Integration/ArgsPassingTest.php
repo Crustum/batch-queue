@@ -52,9 +52,9 @@ class ArgsPassingTest extends BaseIntegrationTestCase
 
         try {
             $this->exec('queue worker --config=batchjob --queue=batchjob --max-jobs=10 --max-runtime=10');
-        } catch (Exception $e) {
-            echo 'EXCEPTION during worker command: ' . $e->getMessage() . "\n";
-            throw $e;
+        } catch (Exception $exception) {
+            echo 'EXCEPTION during worker command: ' . $exception->getMessage() . "\n";
+            throw $exception;
         }
 
         $storage = new SqlBatchStorage();
@@ -84,8 +84,8 @@ class ArgsPassingTest extends BaseIntegrationTestCase
 
         try {
             $this->exec('queue worker --config=batchjob --queue=batchjob --max-jobs=2 --max-runtime=5 --verbose');
-        } catch (Exception $e) {
-            echo 'EXCEPTION during callback worker: ' . $e->getMessage() . "\n";
+        } catch (Exception $exception) {
+            echo 'EXCEPTION during callback worker: ' . $exception->getMessage() . "\n";
         }
 
         $updatedBatch = $storage->getBatch($batchId);
@@ -126,11 +126,7 @@ class ArgsPassingTest extends BaseIntegrationTestCase
         $batchJobCount = $this->countMessages('batchjob');
         $this->assertEquals(2, $batchJobCount, 'Should have 2 jobs queued to batchjob queue');
 
-        try {
-            $this->exec('queue worker --config=batchjob --queue=batchjob --max-jobs=4 --max-runtime=10');
-        } catch (Exception $e) {
-            throw $e;
-        }
+        $this->exec('queue worker --config=batchjob --queue=batchjob --max-jobs=4 --max-runtime=10');
 
         $executedJobs = AccumulatorTestJob::$executedJobs;
         $this->assertCount(2, $executedJobs, 'Both jobs should have executed');
@@ -171,22 +167,14 @@ class ArgsPassingTest extends BaseIntegrationTestCase
 
         $chainedCount = $this->countMessages('chainedjobs');
         $this->assertEquals(1, $chainedCount, 'Should have 1 chain job queued initially');
+        $this->exec('queue worker --config=chainedjobs --max-jobs=3 --max-runtime=5 -v');
 
-        try {
-            $this->exec('queue worker --config=chainedjobs --max-jobs=3 --max-runtime=5 -v');
-        } catch (Exception $e) {
-            throw $e;
-        }
         $this->refreshQM();
 
         $chainedCount = $this->countMessages('chainedjobs');
         $this->assertEquals(1, $chainedCount, 'Second chain job should be queued');
 
-        try {
-            $this->exec('queue worker --config=chainedjobs --max-jobs=1 --max-runtime=5 -v');
-        } catch (Exception $e) {
-            throw $e;
-        }
+        $this->exec('queue worker --config=chainedjobs --max-jobs=1 --max-runtime=5 -v');
 
         $batchData = $storage->getBatch($batchId);
         $this->assertEquals('completed', $batchData->status, 'Chain should be completed');
@@ -245,11 +233,7 @@ class ArgsPassingTest extends BaseIntegrationTestCase
 
         $this->refreshQM();
 
-        try {
-            $this->exec('queue worker --config=batchjob --queue=batchjob --max-jobs=6 --max-runtime=10');
-        } catch (Exception $e) {
-            throw $e;
-        }
+        $this->exec('queue worker --config=batchjob --queue=batchjob --max-jobs=6 --max-runtime=10');
 
         $executedJobs = AccumulatorTestJob::$executedJobs;
         $this->assertCount(3, $executedJobs, 'All 3 jobs should have executed');

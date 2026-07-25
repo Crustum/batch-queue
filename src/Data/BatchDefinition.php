@@ -19,26 +19,43 @@ use InvalidArgumentException;
 final class BatchDefinition
 {
     public const TYPE_PARALLEL = 'parallel';
+
     public const TYPE_SEQUENTIAL = 'sequential';
 
     public const STATUS_PENDING = 'pending';
+
     public const STATUS_RUNNING = 'running';
+
     public const STATUS_COMPLETED = 'completed';
+
     public const STATUS_FAILED = 'failed';
 
     public string $id;
+
     public string $type;
+
     public array $jobs;
+
     public array $context;
+
     public array $options;
+
     public string $status;
+
     public int $totalJobs;
+
     public int $completedJobs;
+
     public int $failedJobs;
+
     public ?DateTime $created;
+
     public ?DateTime $modified;
+
     public ?DateTime $completedAt;
+
     public ?string $queueName;
+
     public ?string $queueConfig;
 
     /**
@@ -81,7 +98,7 @@ final class BatchDefinition
         $this->id = $id;
         $this->type = $type;
 
-        $jobsAreLoaded = static::areJobsLoadedFromStorage($jobs);
+        $jobsAreLoaded = $this->areJobsLoadedFromStorage($jobs);
         if ($jobsAreLoaded) {
             $this->jobs = $jobs;
             $this->totalJobs = count($this->jobs);
@@ -99,6 +116,20 @@ final class BatchDefinition
     }
 
     /**
+     * Drop null/false slots so conditional job lists can be passed to batch()/chain()
+     *
+     * @param array $jobs Job definitions
+     * @return array Filtered job definitions (reindexed)
+     */
+    public static function filterFalsyJobs(array $jobs): array
+    {
+        return array_values(array_filter(
+            $jobs,
+            static fn(mixed $job): bool => $job !== null && $job !== false,
+        ));
+    }
+
+    /**
      * Normalize job definitions to consistent format
      *
      * @param array $jobs Job definitions
@@ -106,6 +137,7 @@ final class BatchDefinition
      */
     private function normalizeJobs(array $jobs): array
     {
+        $jobs = self::filterFalsyJobs($jobs);
         $normalized = [];
         $factory = new JobDefinitionFactory();
 
@@ -119,9 +151,7 @@ final class BatchDefinition
 
                 $normalized[] = $jobDefinition->toNormalized($index, $jobId);
             } catch (InvalidArgumentException $e) {
-                throw new InvalidArgumentException(
-                    "Invalid job definition at index {$index}: {$e->getMessage()}",
-                );
+                throw new InvalidArgumentException("Invalid job definition at index {$index}: {$e->getMessage()}", $e->getCode(), $e);
             }
         }
 
@@ -163,7 +193,7 @@ final class BatchDefinition
      */
     public function getJobsWithCompensation(): array
     {
-        return array_filter($this->jobs, fn($job) => $job['compensation'] !== null);
+        return array_filter($this->jobs, fn(array $job): bool => $job['compensation'] !== null);
     }
 
     /**
@@ -216,6 +246,36 @@ final class BatchDefinition
     }
 
     /**
+     * Whether the batch continues after individual job failures
+     *
+     * @return bool
+     */
+    public function allowsFailures(): bool
+    {
+        return (bool)($this->options['allow_failures'] ?? false);
+    }
+
+    /**
+     * Whether every job has reached a terminal outcome (completed or failed)
+     *
+     * @return bool
+     */
+    public function isSettled(): bool
+    {
+        return $this->completedJobs + $this->failedJobs >= $this->totalJobs;
+    }
+
+    /**
+     * Whether the batch itself is in a terminal status
+     *
+     * @return bool
+     */
+    public function isTerminal(): bool
+    {
+        return $this->status === self::STATUS_COMPLETED || $this->status === self::STATUS_FAILED;
+    }
+
+    /**
      * Mark batch as completed
      *
      * @return void
@@ -245,7 +305,9 @@ final class BatchDefinition
      */
     private function validateJobs(array $jobs): void
     {
-        if (empty($jobs)) {
+        $jobs = self::filterFalsyJobs($jobs);
+
+        if ($jobs === []) {
             throw new InvalidArgumentException('Batch must contain at least one job');
         }
 
@@ -255,9 +317,7 @@ final class BatchDefinition
             try {
                 $factory->create($jobInput, $this->type);
             } catch (InvalidArgumentException $e) {
-                throw new InvalidArgumentException(
-                    "Invalid job definition at index {$index}: {$e->getMessage()}",
-                );
+                throw new InvalidArgumentException("Invalid job definition at index {$index}: {$e->getMessage()}", $e->getCode(), $e);
             }
         }
     }
@@ -295,7 +355,7 @@ final class BatchDefinition
      */
     public static function fromArray(array $data): static
     {
-        $batch = new static(
+        $batch = new self(
             id: $data['id'],
             type: $data['type'],
             jobs: $data['jobs'],
@@ -336,9 +396,9 @@ final class BatchDefinition
      * @param array $jobs Jobs array
      * @return bool True if jobs appear to be loaded from storage
      */
-    private static function areJobsLoadedFromStorage(array $jobs): bool
+    private function areJobsLoadedFromStorage(array $jobs): bool
     {
-        if (empty($jobs)) {
+        if ($jobs === []) {
             return false;
         }
 
@@ -348,8 +408,7 @@ final class BatchDefinition
         }
 
         $loadedJobKeys = ['batch_id', 'job_id', 'status', 'position'];
-        $hasLoadedKeys = count(array_intersect_key($firstJob, array_flip($loadedJobKeys))) === count($loadedJobKeys);
 
-        return $hasLoadedKeys;
+        return count(array_intersect_key($firstJob, array_flip($loadedJobKeys))) === count($loadedJobKeys);
     }
 }
